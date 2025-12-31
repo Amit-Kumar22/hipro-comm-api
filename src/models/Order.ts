@@ -2,21 +2,18 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 // Order Status Types
 export type OrderStatus = 
-  | 'pending'
-  | 'confirmed'
-  | 'processing'
-  | 'shipped'
-  | 'delivered'
-  | 'cancelled'
-  | 'refunded';
+  | 'PENDING'
+  | 'PAID'
+  | 'SHIPPED'
+  | 'DELIVERED'
+  | 'CANCELLED';
 
 // Payment Status Types
 export type PaymentStatus = 
-  | 'pending'
-  | 'cod'
-  | 'paid'
-  | 'failed'
-  | 'refunded';
+  | 'PENDING'
+  | 'PAID'
+  | 'FAILED'
+  | 'REFUNDED';
 
 // Order Item Interface
 export interface IOrderItem {
@@ -67,6 +64,7 @@ export interface IOrder extends Document {
   status: OrderStatus;
   paymentStatus: PaymentStatus;
   paymentMethod: 'cod' | 'online';
+  paymentId?: Types.ObjectId;
   statusHistory: {
     status: OrderStatus;
     timestamp: Date;
@@ -80,6 +78,8 @@ export interface IOrder extends Document {
     actualDelivery?: Date;
   };
   notes: string;
+  cancelledAt?: Date;
+  cancellationReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -95,8 +95,8 @@ const OrderSchema = new Schema<IOrder>({
   },
   user: {
     type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: [true, 'User is required']
+    ref: 'Customer',
+    required: [true, 'Customer is required']
   },
   items: [{
     product: {
@@ -239,23 +239,27 @@ const OrderSchema = new Schema<IOrder>({
   },
   status: {
     type: String,
-    enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'],
-    default: 'pending'
+    enum: ['PENDING', 'PAID', 'SHIPPED', 'DELIVERED', 'CANCELLED'],
+    default: 'PENDING'
   },
   paymentStatus: {
     type: String,
-    enum: ['pending', 'cod', 'paid', 'failed', 'refunded'],
-    default: 'pending'
+    enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED'],
+    default: 'PENDING'
   },
   paymentMethod: {
     type: String,
     enum: ['cod', 'online'],
     required: true
   },
+  paymentId: {
+    type: Schema.Types.ObjectId,
+    ref: 'Payment'
+  },
   statusHistory: [{
     status: {
       type: String,
-      enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'],
+      enum: ['PENDING', 'PAID', 'SHIPPED', 'DELIVERED', 'CANCELLED'],
       required: true
     },
     timestamp: {
@@ -268,7 +272,7 @@ const OrderSchema = new Schema<IOrder>({
     },
     updatedBy: {
       type: Schema.Types.ObjectId,
-      ref: 'User'
+      ref: 'Customer'
     }
   }],
   tracking: {
@@ -292,6 +296,14 @@ const OrderSchema = new Schema<IOrder>({
     type: String,
     trim: true,
     maxLength: [500, 'Notes cannot exceed 500 characters']
+  },
+  cancelledAt: {
+    type: Date
+  },
+  cancellationReason: {
+    type: String,
+    trim: true,
+    maxLength: [200, 'Cancellation reason cannot exceed 200 characters']
   }
 }, {
   timestamps: true
@@ -336,12 +348,12 @@ OrderSchema.virtual('uniqueProductCount').get(function(this: IOrder) {
 
 // Virtual for can cancel
 OrderSchema.virtual('canCancel').get(function(this: IOrder) {
-  return ['pending', 'confirmed'].includes(this.status);
+  return ['PENDING', 'PAID'].includes(this.status);
 });
 
 // Virtual for can return
 OrderSchema.virtual('canReturn').get(function(this: IOrder) {
-  return this.status === 'delivered' && this.paymentStatus !== 'refunded';
+  return this.status === 'DELIVERED' && this.paymentStatus !== 'REFUNDED';
 });
 
 export const Order = mongoose.model<IOrder>('Order', OrderSchema);

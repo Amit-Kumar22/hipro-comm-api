@@ -111,19 +111,45 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
     .skip(pagination.skip)
     .limit(pagination.limit);
 
-  // Get inventory data separately if needed
-  let filteredProducts = products;
-  if (inStock === 'true') {
-    const productIds = products.map(p => p._id);
-    const inventoryData = await Inventory.find({ 
-      product: { $in: productIds },
-      isActive: true 
-    });
+  // Get inventory data for all products
+  const productIds = products.map(p => p._id);
+  const inventoryData = await Inventory.find({ 
+    product: { $in: productIds },
+    isActive: true 
+  });
+
+  // Merge inventory data with products
+  const productsWithInventory = products.map(product => {
+    const inventory = inventoryData.find(inv => 
+      inv.product.toString() === product._id.toString()
+    );
     
-    filteredProducts = products.filter(product => {
-      const inventory = inventoryData.find(inv => inv.product.toString() === product._id.toString());
-      return inventory && inventory.availableForSale > 0;
-    });
+    return {
+      ...product.toObject(),
+      inventory: inventory ? {
+        availableForSale: inventory.availableForSale,
+        quantityAvailable: inventory.quantityAvailable,
+        quantityReserved: inventory.quantityReserved,
+        isOutOfStock: inventory.isOutOfStock,
+        isLowStock: inventory.isLowStock,
+        reorderLevel: inventory.reorderLevel
+      } : {
+        availableForSale: 0,
+        quantityAvailable: 0,
+        quantityReserved: 0,
+        isOutOfStock: true,
+        isLowStock: false,
+        reorderLevel: 0
+      }
+    };
+  });
+
+  // Apply stock filter if needed
+  let filteredProducts = productsWithInventory;
+  if (inStock === 'true') {
+    filteredProducts = productsWithInventory.filter(product => 
+      product.inventory.availableForSale > 0
+    );
   }
 
   res.json({
@@ -331,9 +357,42 @@ export const getFeaturedProducts = asyncHandler(async (req: Request, res: Respon
     .sort({ createdAt: -1 })
     .limit(Number(limit));
 
+  // Get inventory data for featured products
+  const productIds = products.map(p => p._id);
+  const inventoryData = await Inventory.find({ 
+    product: { $in: productIds },
+    isActive: true 
+  });
+
+  // Merge inventory data with products
+  const productsWithInventory = products.map(product => {
+    const inventory = inventoryData.find(inv => 
+      inv.product.toString() === product._id.toString()
+    );
+    
+    return {
+      ...product.toObject(),
+      inventory: inventory ? {
+        availableForSale: inventory.availableForSale,
+        quantityAvailable: inventory.quantityAvailable,
+        quantityReserved: inventory.quantityReserved,
+        isOutOfStock: inventory.isOutOfStock,
+        isLowStock: inventory.isLowStock,
+        reorderLevel: inventory.reorderLevel
+      } : {
+        availableForSale: 0,
+        quantityAvailable: 0,
+        quantityReserved: 0,
+        isOutOfStock: true,
+        isLowStock: false,
+        reorderLevel: 0
+      }
+    };
+  });
+
   res.json({
     success: true,
-    data: products
+    data: productsWithInventory
   });
 });
 

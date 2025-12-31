@@ -38,6 +38,12 @@ export class NotFoundError extends AppError {
   }
 }
 
+export class BadRequestError extends AppError {
+  constructor(message: string) {
+    super(message, 400);
+  }
+}
+
 export const notFound = (req: Request, res: Response, next: NextFunction) => {
   const error = new NotFoundError(`Not Found - ${req.originalUrl}`);
   next(error);
