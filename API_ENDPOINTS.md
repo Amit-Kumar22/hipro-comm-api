@@ -715,7 +715,177 @@ Delete product (Admin only)
 
 ---
 
-## 📦 Orders Endpoints
+## � Cart Endpoints
+
+### GET `/cart`
+Get user's shopping cart
+
+**Authentication:** Required (Bearer Token)
+
+**Parameters:** None
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "64f123456789abcdef123456_default_default",
+        "product": {
+          "_id": "64f123456789abcdef123456",
+          "name": "iPhone 15 Pro",
+          "slug": "iphone-15-pro",
+          "price": {
+            "original": 1099.99,
+            "selling": 999.99,
+            "discount": 100.00
+          },
+          "images": [
+            {
+              "url": "iphone15pro-1.jpg",
+              "alt": "iPhone 15 Pro Front View",
+              "isPrimary": true
+            }
+          ],
+          "category": {
+            "_id": "64f123456789abcdef123457",
+            "name": "Smartphones",
+            "slug": "smartphones"
+          },
+          "sku": "APPLE-IP15P-256GB",
+          "inStock": true
+        },
+        "quantity": 2,
+        "selectedSize": null,
+        "selectedColor": null,
+        "itemTotal": 1999.98
+      }
+    ],
+    "totals": {
+      "totalItems": 2,
+      "totalPrice": 1999.98,
+      "subtotal": 1999.98,
+      "tax": 359.996,
+      "shipping": 0,
+      "total": 2359.976
+    }
+  }
+}
+```
+
+### POST `/cart/add`
+Add item to shopping cart
+
+**Authentication:** Required (Bearer Token)
+
+**Request Body:**
+```json
+{
+  "productId": "64f123456789abcdef123456",
+  "quantity": 2,
+  "selectedSize": "256GB",
+  "selectedColor": "Natural Titanium"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Item added to cart successfully",
+  "data": {
+    "cartItemsCount": 3
+  }
+}
+```
+
+### PUT `/cart/item/:itemId`
+Update cart item quantity
+
+**Authentication:** Required (Bearer Token)
+
+**Path Parameters:**
+- `itemId` (string, required): Cart item ID
+
+**Request Body:**
+```json
+{
+  "quantity": 3
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Cart item updated successfully",
+  "data": {
+    "cartItemsCount": 3
+  }
+}
+```
+
+### DELETE `/cart/item/:itemId`
+Remove item from shopping cart
+
+**Authentication:** Required (Bearer Token)
+
+**Path Parameters:**
+- `itemId` (string, required): Cart item ID
+
+**Request Body:** None
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Item removed from cart successfully",
+  "data": {
+    "cartItemsCount": 2
+  }
+}
+```
+
+### DELETE `/cart/clear`
+Clear entire shopping cart
+
+**Authentication:** Required (Bearer Token)
+
+**Request Body:** None
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Cart cleared successfully",
+  "data": {
+    "cartItemsCount": 0
+  }
+}
+```
+
+### GET `/cart/count`
+Get cart items count
+
+**Authentication:** Required (Bearer Token)
+
+**Parameters:** None
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "cartItemsCount": 3,
+    "totalItems": 5
+  }
+}
+```
+
+---
+
+## �📦 Orders Endpoints
 
 ### GET `/orders`
 Get orders (Placeholder - To be implemented)
@@ -801,6 +971,219 @@ All endpoints return consistent error responses:
   - `X-RateLimit-Limit`: Request limit
   - `X-RateLimit-Remaining`: Remaining requests
   - `X-RateLimit-Reset`: Reset time
+
+---
+
+## 🔑 Admin Endpoints
+
+All admin endpoints require authentication with Bearer token and admin role.
+
+### GET `/admin/dashboard/stats`
+Get dashboard statistics for admin panel
+
+**Authentication:** Required (Bearer Token + Admin role)
+
+**Parameters:** None
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "overview": {
+      "totalUsers": 150,
+      "totalProducts": 45,
+      "totalCategories": 8,
+      "totalOrders": 0,
+      "recentProducts": 5,
+      "recentUsers": 12
+    },
+    "topCategories": [
+      {
+        "name": "Electronics",
+        "slug": "electronics",
+        "productCount": 15
+      }
+    ]
+  }
+}
+```
+
+### GET `/admin/dashboard/activity`
+Get recent activity for admin dashboard
+
+**Authentication:** Required (Bearer Token + Admin role)
+
+**Query Parameters:**
+- `limit` (optional): Number of activities to return (default: 10)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "activities": [
+      {
+        "type": "user_registered",
+        "title": "New user registered: John Doe",
+        "subtitle": "john@example.com",
+        "timestamp": "2025-12-29T10:30:00.000Z",
+        "id": "64f123456789abcdef123456"
+      },
+      {
+        "type": "product_created",
+        "title": "New product added: Smartphone XYZ",
+        "subtitle": "₹25000 • Electronics",
+        "timestamp": "2025-12-29T09:15:00.000Z",
+        "id": "64f123456789abcdef123457"
+      }
+    ]
+  }
+}
+```
+
+### GET `/admin/users`
+Get all users with filtering and pagination
+
+**Authentication:** Required (Bearer Token + Admin role)
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 20)
+- `search` (optional): Search by name or email
+- `role` (optional): Filter by role (customer/admin)
+- `sortBy` (optional): Sort field (default: createdAt)
+- `sortOrder` (optional): Sort direction (asc/desc, default: desc)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "users": [
+      {
+        "_id": "64f123456789abcdef123456",
+        "name": "John Doe",
+        "email": "john@example.com",
+        "role": "customer",
+        "phone": "9876543210",
+        "createdAt": "2025-12-29T10:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalCount": 100,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+### GET `/admin/users/:id`
+Get single user details
+
+**Authentication:** Required (Bearer Token + Admin role)
+
+**Parameters:**
+- `id`: User ID (MongoDB ObjectId)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "_id": "64f123456789abcdef123456",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "role": "customer",
+      "phone": "9876543210",
+      "createdAt": "2025-12-29T10:30:00.000Z"
+    }
+  }
+}
+```
+
+### PUT `/admin/users/:id/role`
+Update user role
+
+**Authentication:** Required (Bearer Token + Admin role)
+
+**Parameters:**
+- `id`: User ID (MongoDB ObjectId)
+
+**Request Body:**
+```json
+{
+  "role": "admin"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "_id": "64f123456789abcdef123456",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "role": "admin",
+      "phone": "9876543210",
+      "createdAt": "2025-12-29T10:30:00.000Z"
+    }
+  },
+  "message": "User role updated to admin"
+}
+```
+
+### DELETE `/admin/users/:id`
+Delete user account (non-admin users only)
+
+**Authentication:** Required (Bearer Token + Admin role)
+
+**Parameters:**
+- `id`: User ID (MongoDB ObjectId)
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User deleted successfully"
+}
+```
+
+### GET `/admin/system`
+Get system information and server stats
+
+**Authentication:** Required (Bearer Token + Admin role)
+
+**Parameters:** None
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "systemInfo": {
+      "version": "1.0.0",
+      "nodeVersion": "v18.17.0",
+      "environment": "development",
+      "uptime": 3600,
+      "memoryUsage": {
+        "rss": 45678912,
+        "heapTotal": 32456789,
+        "heapUsed": 21234567,
+        "external": 1234567,
+        "arrayBuffers": 123456
+      },
+      "platform": "darwin"
+    }
+  }
+}
+```
 
 ---
 

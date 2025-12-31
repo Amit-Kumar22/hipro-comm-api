@@ -42,6 +42,12 @@ export interface IProduct extends Document {
   };
   isActive: boolean;
   isFeatured: boolean;
+  inStock: boolean;
+  stock: {
+    quantity: number;
+    reserved: number;
+    available: number;
+  };
   tags: string[];
   seo: {
     metaTitle?: string;
@@ -54,6 +60,10 @@ export interface IProduct extends Document {
   };
   createdAt: Date;
   updatedAt: Date;
+  // Methods
+  reserveStock(quantity: number): Promise<boolean>;
+  releaseStock(quantity: number): Promise<boolean>;
+  confirmSale(quantity: number): Promise<boolean>;
 }
 
 // Product Schema
@@ -205,6 +215,28 @@ const ProductSchema = new Schema<IProduct>({
     type: Boolean,
     default: false
   },
+  inStock: {
+    type: Boolean,
+    default: true
+  },
+  stock: {
+    quantity: {
+      type: Number,
+      required: true,
+      min: 0,
+      default: 0
+    },
+    reserved: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    available: {
+      type: Number,
+      default: 0,
+      min: 0
+    }
+  },
   tags: [{
     type: String,
     trim: true,
@@ -252,13 +284,56 @@ ProductSchema.index({ createdAt: -1 });
 // Text index for search
 ProductSchema.index({ name: 'text', description: 'text', shortDescription: 'text' });
 
-// Pre-save middleware to calculate discount percentage
+// Pre-save middleware to calculate discount percentage and available stock
 ProductSchema.pre('save', function(this: IProduct) {
   if (this.isModified('price')) {
     const { original, selling } = this.price;
     this.price.discount = original > selling ? Math.round(((original - selling) / original) * 100) : 0;
   }
+  
+  // Calculate available stock
+  if (this.isModified('stock')) {
+    this.stock.available = Math.max(0, this.stock.quantity - this.stock.reserved);
+    this.inStock = this.stock.available > 0;
+  }
 });
+
+// Stock management methods
+ProductSchema.methods.reserveStock = async function(quantity: number): Promise<boolean> {
+  if (this.stock.available < quantity) {
+    return false;
+  }
+  
+  this.stock.reserved += quantity;
+  this.stock.available = Math.max(0, this.stock.quantity - this.stock.reserved);
+  this.inStock = this.stock.available > 0;
+  
+  await this.save();
+  return true;
+};
+
+ProductSchema.methods.releaseStock = async function(quantity: number): Promise<boolean> {
+  this.stock.reserved = Math.max(0, this.stock.reserved - quantity);
+  this.stock.available = Math.max(0, this.stock.quantity - this.stock.reserved);
+  this.inStock = this.stock.available > 0;
+  
+  await this.save();
+  return true;
+};
+
+ProductSchema.methods.confirmSale = async function(quantity: number): Promise<boolean> {
+  if (this.stock.reserved < quantity || this.stock.quantity < quantity) {
+    return false;
+  }
+  
+  this.stock.quantity -= quantity;
+  this.stock.reserved -= quantity;
+  this.stock.available = Math.max(0, this.stock.quantity - this.stock.reserved);
+  this.inStock = this.stock.available > 0;
+  
+  await this.save();
+  return true;
+};
 
 // Virtual for primary image
 ProductSchema.virtual('primaryImage').get(function(this: IProduct) {

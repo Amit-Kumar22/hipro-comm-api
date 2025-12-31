@@ -5,19 +5,63 @@ import morgan from 'morgan';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
+import cookieParser from 'cookie-parser';
 import { config } from './config/env.js';
 import { connectDatabase } from './config/database.js';
 import { errorHandler, notFound } from './middleware/errorMiddleware.js';
 import authRoutes from './routes/auth.js';
 import categoryRoutes from './routes/categories.js';
 import productRoutes from './routes/products.js';
+import cartRoutes from './routes/cart.js';
 import orderRoutes from './routes/orders.js';
+import paymentsRoutes from './routes/payments.js';
 import userRoutes from './routes/users.js';
+import adminRoutes from './routes/admin.js';
+import customerRoutes from './routes/customers.js';
 
 const app = express();
 
 // Trust proxy for rate limiting behind reverse proxy
 app.set('trust proxy', 1);
+
+// Manual CORS preflight handler
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Allow requests with no origin (like mobile apps or curl requests)
+  if (!origin) {
+    return next();
+  }
+  
+  // In development, allow all localhost origins
+  if (config.NODE_ENV === 'development') {
+    if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+      
+      if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+      }
+      return next();
+    }
+  }
+  
+  // For production, check against FRONTEND_URL
+  if (origin === config.FRONTEND_URL) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+  }
+  
+  next();
+});
 
 // Security middleware
 app.use(helmet({
@@ -26,10 +70,31 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: config.FRONTEND_URL,
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // In development, allow all localhost origins
+    if (config.NODE_ENV === 'development') {
+      if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+        return callback(null, true);
+      }
+    }
+    
+    // In production or for specific origins, check against FRONTEND_URL
+    const allowedOrigins = [config.FRONTEND_URL];
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['X-Total-Count'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
 // Rate limiting
@@ -48,6 +113,9 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Cookie parser middleware
+app.use(cookieParser());
+
 // Data sanitization against NoSQL query injection
 app.use(mongoSanitize());
 
@@ -65,16 +133,23 @@ app.get('/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    environment: config.NODE_ENV
+    environment: config.NODE_ENV,
+    port: config.PORT,
+    frontendUrl: config.FRONTEND_URL,
+    corsOrigin: req.headers.origin || 'No origin header'
   });
 });
 
 // API routes with versioning
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/customers', customerRoutes);
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/products', productRoutes);
+app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1/orders', orderRoutes);
+app.use('/api/v1/payments', paymentsRoutes);
 app.use('/api/v1/users', userRoutes);
+app.use('/api/v1/admin', adminRoutes);
 
 // 404 handler
 app.use(notFound);
@@ -87,10 +162,13 @@ const startServer = async () => {
     // Connect to database
     await connectDatabase();
     
-    const PORT = config.PORT || 5000;
+    const PORT = config.PORT;
     
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT} in ${config.NODE_ENV} mode`);
+      console.log(`📍 API Base URL: http://localhost:${PORT}/api/v1`);
+      console.log(`🌐 CORS Origin: ${config.FRONTEND_URL}`);
+      console.log(`📋 Health Check: http://localhost:${PORT}/health`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);

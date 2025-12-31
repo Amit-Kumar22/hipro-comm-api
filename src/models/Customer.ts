@@ -1,14 +1,18 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-// User Interface
-export interface IUser extends Document {
+// Customer Interface - Separate from Admin User
+export interface ICustomer extends Document {
   _id: Types.ObjectId;
   name: string;
   email: string;
   password: string;
-  role: 'customer' | 'admin';
   phone?: string;
+  isEmailVerified: boolean;
+  otp?: {
+    code: string;
+    expiresAt: Date;
+  };
   addresses: {
     type: 'billing' | 'shipping';
     street: string;
@@ -29,10 +33,12 @@ export interface IUser extends Document {
   createdAt: Date;
   updatedAt: Date;
   comparePassword(password: string): Promise<boolean>;
+  generateOTP(): { code: string; expiresAt: Date };
+  isOTPValid(code: string): boolean;
 }
 
-// User Schema
-const UserSchema = new Schema<IUser>({
+// Customer Schema - Completely separate from User/Admin
+const CustomerSchema = new Schema<ICustomer>({
   name: {
     type: String,
     required: [true, 'Name is required'],
@@ -52,14 +58,25 @@ const UserSchema = new Schema<IUser>({
     minLength: [6, 'Password must be at least 6 characters'],
     select: false
   },
-  role: {
-    type: String,
-    enum: ['customer', 'admin'],
-    default: 'customer'
-  },
   phone: {
     type: String,
-    match: [/^\d{10}$/, 'Please enter a valid 10-digit phone number']
+    match: [/^\d{10}$/, 'Please enter a valid 10-digit phone number'],
+    sparse: true // Allows multiple null values
+  },
+  isEmailVerified: {
+    type: Boolean,
+    default: false,
+    required: true
+  },
+  otp: {
+    code: {
+      type: String,
+      select: false
+    },
+    expiresAt: {
+      type: Date,
+      select: false
+    }
   },
   addresses: [{
     type: {
@@ -127,12 +144,13 @@ const UserSchema = new Schema<IUser>({
 });
 
 // Indexes
-UserSchema.index({ email: 1 });
-UserSchema.index({ role: 1 });
-UserSchema.index({ createdAt: -1 });
+CustomerSchema.index({ email: 1 });
+CustomerSchema.index({ isEmailVerified: 1 });
+CustomerSchema.index({ 'otp.expiresAt': 1 }, { expireAfterSeconds: 0 }); // Auto cleanup expired OTPs
+CustomerSchema.index({ createdAt: -1 });
 
 // Pre-save middleware to hash password
-UserSchema.pre('save', async function(this: IUser) {
+CustomerSchema.pre('save', async function(this: ICustomer) {
   if (!this.isModified('password')) return;
   
   try {
@@ -144,8 +162,34 @@ UserSchema.pre('save', async function(this: IUser) {
 });
 
 // Method to compare password
-UserSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
+CustomerSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-export const User = mongoose.model<IUser>('User', UserSchema);
+// Method to generate OTP
+CustomerSchema.methods.generateOTP = function(): { code: string; expiresAt: Date } {
+  const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+  
+  this.otp = {
+    code: code,
+    expiresAt: expiresAt
+  };
+  
+  return { code, expiresAt };
+};
+
+// Method to validate OTP
+CustomerSchema.methods.isOTPValid = function(code: string): boolean {
+  if (!this.otp || !this.otp.code || !this.otp.expiresAt) {
+    return false;
+  }
+  
+  if (this.otp.expiresAt < new Date()) {
+    return false; // OTP expired
+  }
+  
+  return this.otp.code === code;
+};
+
+export const Customer = mongoose.model<ICustomer>('Customer', CustomerSchema);
