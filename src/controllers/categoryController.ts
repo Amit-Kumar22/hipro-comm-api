@@ -25,7 +25,47 @@ const categorySchema = z.object({
 
 const updateCategorySchema = categorySchema.partial();
 
-// Get all categories
+/**
+ * @swagger
+ * /api/v1/categories:
+ *   get:
+ *     summary: Get all categories
+ *     tags: [Categories]
+ *     parameters:
+ *       - in: query
+ *         name: includeInactive
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: Include inactive categories
+ *       - in: query
+ *         name: parentOnly
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: Return only parent categories (no children)
+ *     responses:
+ *       200:
+ *         description: Categories retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Category'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const getCategories = asyncHandler(async (req: Request, res: Response) => {
   const { includeInactive = false, parentOnly = false } = req.query;
 

@@ -2,12 +2,89 @@ import { Response } from 'express';
 import mongoose from 'mongoose';
 import { Customer } from '../models/Customer.js';
 import { Product } from '../models/Product.js';
-import { Order, IOrder } from '../models/Order.js';
+import { Order } from '../models/Order.js';
 import { Payment } from '../models/Payment.js';
 import { CustomerAuthenticatedRequest } from '../middleware/customerAuthMiddleware.js';
 import { AppError } from '../middleware/errorMiddleware.js';
 
-// Place new order
+/**
+ * @swagger
+ * /api/v1/orders:
+ *   post:
+ *     summary: Place a new order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - shippingAddress
+ *               - paymentMethod
+ *             properties:
+ *               shippingAddress:
+ *                 type: object
+ *                 required:
+ *                   - street
+ *                   - city
+ *                   - state
+ *                   - zipCode
+ *                 properties:
+ *                   street:
+ *                     type: string
+ *                     example: "123 Main Street"
+ *                   city:
+ *                     type: string
+ *                     example: "New Delhi"
+ *                   state:
+ *                     type: string
+ *                     example: "Delhi"
+ *                   zipCode:
+ *                     type: string
+ *                     example: "110001"
+ *                   country:
+ *                     type: string
+ *                     default: "India"
+ *               billingAddress:
+ *                 type: object
+ *                 description: "If not provided, shipping address will be used"
+ *               paymentMethod:
+ *                 type: string
+ *                 enum: [card, upi, cod, wallet]
+ *                 example: "card"
+ *     responses:
+ *       201:
+ *         description: Order placed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Order placed successfully"
+ *                 data:
+ *                   $ref: '#/components/schemas/Order'
+ *       400:
+ *         description: Invalid order data or empty cart
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Customer not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const placeOrder = async (req: CustomerAuthenticatedRequest, res: Response) => {
   const session = await mongoose.startSession();
   session.startTransaction();

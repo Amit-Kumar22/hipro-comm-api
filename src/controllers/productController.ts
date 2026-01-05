@@ -61,7 +61,103 @@ const createProductSchema = z.object({
 // Validation schema for updating products
 const updateProductSchema = createProductSchema.partial();
 
-// Get all products with filtering, sorting, and pagination
+/**
+ * @swagger
+ * /api/v1/products:
+ *   get:
+ *     summary: Get all products with filtering and pagination
+ *     tags: [Products]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of products per page
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           default: "createdAt"
+ *         description: Field to sort by
+ *       - in: query
+ *         name: sortOrder
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: "desc"
+ *         description: Sort order
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search query for product names
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *         description: Filter by category ID
+ *       - in: query
+ *         name: minPrice
+ *         schema:
+ *           type: number
+ *           default: 0
+ *         description: Minimum price filter
+ *       - in: query
+ *         name: maxPrice
+ *         schema:
+ *           type: number
+ *           default: 999999
+ *         description: Maximum price filter
+ *       - in: query
+ *         name: featured
+ *         schema:
+ *           type: boolean
+ *         description: Filter featured products only
+ *       - in: query
+ *         name: inStock
+ *         schema:
+ *           type: boolean
+ *         description: Filter products in stock only
+ *     responses:
+ *       200:
+ *         description: Products retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Product'
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     page:
+ *                       type: integer
+ *                     limit:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ *                     totalCount:
+ *                       type: integer
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   const {
     page = 1,
@@ -164,7 +260,39 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   });
 });
 
-// Get product by ID
+/**
+ * @swagger
+ * /api/v1/products/{id}:
+ *   get:
+ *     summary: Get product by ID
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Product ID
+ *     responses:
+ *       200:
+ *         description: Product retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/Product'
+ *       404:
+ *         description: Product not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
@@ -210,7 +338,112 @@ export const getProductBySlug = asyncHandler(async (req: Request, res: Response)
   });
 });
 
-// Create new product (Admin only)
+/**
+ * @swagger
+ * /api/v1/products:
+ *   post:
+ *     summary: Create new product (Admin only)
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - description
+ *               - shortDescription
+ *               - categoryId
+ *               - images
+ *               - price
+ *               - dimensions
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 200
+ *                 example: "iPhone 15 Pro"
+ *               description:
+ *                 type: string
+ *                 minLength: 10
+ *                 maxLength: 2000
+ *                 example: "Latest iPhone with advanced camera system"
+ *               shortDescription:
+ *                 type: string
+ *                 minLength: 10
+ *                 maxLength: 300
+ *                 example: "Premium smartphone with cutting-edge features"
+ *               categoryId:
+ *                 type: string
+ *                 example: "64f8b0123456789abcdef123"
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     url:
+ *                       type: string
+ *                       format: uri
+ *                     alt:
+ *                       type: string
+ *                     isPrimary:
+ *                       type: boolean
+ *               price:
+ *                 type: object
+ *                 properties:
+ *                   original:
+ *                     type: number
+ *                     example: 999.99
+ *                   selling:
+ *                     type: number
+ *                     example: 899.99
+ *               dimensions:
+ *                 type: object
+ *                 properties:
+ *                   length:
+ *                     type: number
+ *                   width:
+ *                     type: number
+ *                   height:
+ *                     type: number
+ *                   weight:
+ *                     type: number
+ *                   unit:
+ *                     type: string
+ *                     enum: [cm, inch]
+ *                   weightUnit:
+ *                     type: string
+ *                     enum: [kg, lbs]
+ *               initialStock:
+ *                 type: number
+ *                 example: 100
+ *               isFeatured:
+ *                 type: boolean
+ *                 example: false
+ *     responses:
+ *       201:
+ *         description: Product created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const validatedData = createProductSchema.parse(req.body);
 
