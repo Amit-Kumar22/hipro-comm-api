@@ -47,7 +47,66 @@ const generateCustomerToken = (payload: CustomerJWTPayload): string => {
   } as jwt.SignOptions);
 };
 
-// Set cookie options
+/**
+ * @swagger
+ * /api/v1/customers/register:
+ *   post:
+ *     summary: Register a new customer
+ *     tags: [Customer Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 100
+ *                 example: "John Customer"
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john.customer@example.com"
+ *               password:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "password123"
+ *               phone:
+ *                 type: string
+ *                 pattern: ^\d{10}$
+ *                 example: "9876543210"
+ *     responses:
+ *       201:
+ *         description: Customer registered successfully, OTP sent for verification
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Registration successful. Please verify your email with the OTP sent."
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     customer:
+ *                       $ref: '#/components/schemas/Customer'
+ *       400:
+ *         description: Validation error or customer already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 const getCookieOptions = () => ({
   httpOnly: true,
   secure: config.NODE_ENV === 'production',
@@ -98,9 +157,10 @@ export const registerCustomer = asyncHandler(async (req: Request, res: Response)
       name: customer.name,
       otp: otpData.code
     });
-  } catch (emailError) {
+  } catch (error) {
     // If email fails, remove the customer and throw error
     await Customer.findByIdAndDelete(customer._id);
+    console.error('Email sending failed:', error);
     throw new BadRequestError('Failed to send verification email. Please try again.');
   }
 

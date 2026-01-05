@@ -1,6 +1,6 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { z } from 'zod';
-import { User, Product, Category, Order } from '../models';
+import { User, Product, Category } from '../models';
 import { 
   asyncHandler, 
   ValidationError, 
@@ -87,7 +87,7 @@ export const getAllUsers = asyncHandler(async (req: AuthenticatedRequest, res: R
   } = req.query;
 
   // Build filter
-  const filter: any = {};
+  const filter: Record<string, unknown> = {};
   
   if (search) {
     filter.$or = [
@@ -106,7 +106,7 @@ export const getAllUsers = asyncHandler(async (req: AuthenticatedRequest, res: R
   const totalPages = Math.ceil(totalCount / Number(limit));
 
   // Build sort
-  const sort: any = {};
+  const sort: Record<string, 1 | -1> = {};
   sort[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
 
   // Get users
@@ -236,7 +236,7 @@ export const getRecentActivity = asyncHandler(async (req: AuthenticatedRequest, 
     ...recentProducts.map(product => ({
       type: 'product_created',
       title: `New product added: ${product.name}`,
-      subtitle: `₹${product.price.selling} • ${(product.category as any)?.name || 'No Category'}`,
+      subtitle: `₹${product.price.selling} • ${(product.category as { name?: string })?.name || 'No Category'}`,
       timestamp: product.createdAt,
       id: product._id
     }))

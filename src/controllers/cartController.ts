@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { z } from 'zod';
 import { Customer, Product } from '../models';
 import { 
@@ -20,11 +20,62 @@ const updateCartItemSchema = z.object({
   quantity: z.number().min(0, 'Quantity must be at least 0').max(100, 'Maximum quantity is 100')
 });
 
-const removeFromCartSchema = z.object({
-  itemId: z.string().min(1, 'Item ID is required')
-});
-
-// Get customer's cart
+/**
+ * @swagger
+ * /api/v1/cart:
+ *   get:
+ *     summary: Get customer's shopping cart
+ *     tags: [Cart]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Cart retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     items:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           _id:
+ *                             type: string
+ *                           product:
+ *                             $ref: '#/components/schemas/Product'
+ *                           quantity:
+ *                             type: integer
+ *                           selectedSize:
+ *                             type: string
+ *                           selectedColor:
+ *                             type: string
+ *                           unitPrice:
+ *                             type: number
+ *                           totalPrice:
+ *                             type: number
+ *                     summary:
+ *                       type: object
+ *                       properties:
+ *                         totalItems:
+ *                           type: integer
+ *                         totalPrice:
+ *                           type: number
+ *       401:
+ *         description: Customer not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const getCart = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');
@@ -89,7 +140,59 @@ export const getCart = asyncHandler(async (req: CustomerAuthenticatedRequest, re
   });
 });
 
-// Add item to cart
+/**
+ * @swagger
+ * /api/v1/cart:
+ *   post:
+ *     summary: Add item to cart
+ *     tags: [Cart]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - productId
+ *               - quantity
+ *             properties:
+ *               productId:
+ *                 type: string
+ *                 example: "64f8b0123456789abcdef123"
+ *               quantity:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 100
+ *                 example: 2
+ *               selectedSize:
+ *                 type: string
+ *                 example: "M"
+ *               selectedColor:
+ *                 type: string
+ *                 example: "Red"
+ *     responses:
+ *       200:
+ *         description: Item added to cart successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: Validation error or product not available
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Customer not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const addToCart = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');

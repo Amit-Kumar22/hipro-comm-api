@@ -31,10 +31,83 @@ const changePasswordSchema = z.object({
 
 // Generate JWT token
 const generateToken = (payload: Omit<JWTPayload, 'iat' | 'exp'>): string => {
-  return jwt.sign(payload as any, config.JWT_SECRET, { expiresIn: config.JWT_EXPIRES_IN } as jwt.SignOptions);
+  return jwt.sign(payload, config.JWT_SECRET, { expiresIn: config.JWT_EXPIRES_IN } as jwt.SignOptions);
 };
 
-// Register user
+/**
+ * @swagger
+ * /api/v1/auth/register:
+ *   post:
+ *     summary: Register a new user
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 100
+ *                 example: "John Doe"
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john.doe@example.com"
+ *               password:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "password123"
+ *               phone:
+ *                 type: string
+ *                 pattern: ^\d{10}$
+ *                 example: "1234567890"
+ *     responses:
+ *       201:
+ *         description: User registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "User registered successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     token:
+ *                       type: string
+ *                       example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *         headers:
+ *           Set-Cookie:
+ *             schema:
+ *               type: string
+ *               example: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; Path=/; HttpOnly
+ *       400:
+ *         description: Validation error or user already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const register = asyncHandler(async (req: Request, res: Response) => {
   const validatedData = registerSchema.parse(req.body);
 
@@ -70,7 +143,75 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   });
 });
 
-// Login user
+/**
+ * @swagger
+ * /api/v1/auth/login:
+ *   post:
+ *     summary: Login user
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john.doe@example.com"
+ *               password:
+ *                 type: string
+ *                 example: "password123"
+ *     responses:
+ *       200:
+ *         description: User logged in successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Login successful"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     token:
+ *                       type: string
+ *                       example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *         headers:
+ *           Set-Cookie:
+ *             schema:
+ *               type: string
+ *               example: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; Path=/; HttpOnly
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Invalid credentials
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const validatedData = loginSchema.parse(req.body);
 
@@ -109,7 +250,44 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   });
 });
 
-// Get current user
+/**
+ * @swagger
+ * /api/v1/auth/me:
+ *   get:
+ *     summary: Get current user profile
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: User profile retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized - Invalid or missing token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const getMe = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) {
     throw new AuthError('User not found');
@@ -130,7 +308,87 @@ export const getMe = asyncHandler(async (req: AuthenticatedRequest, res: Respons
   });
 });
 
-// Update profile
+/**
+ * @swagger
+ * /api/v1/auth/profile:
+ *   put:
+ *     summary: Update user profile
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 100
+ *                 example: "John Doe Updated"
+ *               phone:
+ *                 type: string
+ *                 pattern: ^\d{10}$
+ *                 example: "9876543210"
+ *               addresses:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     type:
+ *                       type: string
+ *                       enum: [billing, shipping]
+ *                       example: "shipping"
+ *                     street:
+ *                       type: string
+ *                       example: "123 Main Street"
+ *                     city:
+ *                       type: string
+ *                       example: "New Delhi"
+ *                     state:
+ *                       type: string
+ *                       example: "Delhi"
+ *                     pincode:
+ *                       type: string
+ *                       pattern: ^\d{6}$
+ *                       example: "110001"
+ *                     country:
+ *                       type: string
+ *                       default: "India"
+ *                       example: "India"
+ *                     isDefault:
+ *                       type: boolean
+ *                       default: false
+ *                       example: true
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const updateProfile = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) {
     throw new AuthError('User not found');
@@ -178,7 +436,65 @@ export const updateProfile = asyncHandler(async (req: AuthenticatedRequest, res:
   });
 });
 
-// Change password
+/**
+ * @swagger
+ * /api/v1/auth/change-password:
+ *   put:
+ *     summary: Change user password
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *                 example: "oldpassword123"
+ *               newPassword:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "newpassword123"
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Password changed successfully"
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized or incorrect current password
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 export const changePassword = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) {
     throw new AuthError('User not found');
@@ -208,7 +524,28 @@ export const changePassword = asyncHandler(async (req: AuthenticatedRequest, res
   });
 });
 
-// Logout (client-side token removal)
+/**
+ * @swagger
+ * /api/v1/auth/logout:
+ *   post:
+ *     summary: Logout user
+ *     tags: [Authentication]
+ *     responses:
+ *       200:
+ *         description: Logged out successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Logged out successfully"
+ *     description: Logout endpoint for client-side token removal. The client should remove the JWT token from storage/cookies.
+ */
 export const logout = asyncHandler(async (req: Request, res: Response) => {
   res.json({
     success: true,

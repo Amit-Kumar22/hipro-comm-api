@@ -6,6 +6,8 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import cookieParser from 'cookie-parser';
+import swaggerUi from 'swagger-ui-express';
+import swaggerSpecs from './config/swagger.js';
 import { config } from './config/env.js';
 import { connectDatabase } from './config/database.js';
 import { errorHandler, notFound } from './middleware/errorMiddleware.js';
@@ -140,6 +142,24 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Swagger API Documentation
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'HiproTech Commerce API Docs',
+  swaggerOptions: {
+    persistAuthorization: true,
+    displayRequestDuration: true,
+    filter: true,
+    tryItOutEnabled: true
+  }
+}));
+
+// Redirect /docs to /api/docs for convenience
+app.get('/docs', (req, res) => {
+  res.redirect('/api/docs');
+});
+
 // API routes with versioning
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers', customerRoutes);
@@ -167,6 +187,7 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT} in ${config.NODE_ENV} mode`);
       console.log(`📍 API Base URL: http://localhost:${PORT}/api/v1`);
+      console.log(`📚 API Documentation: http://localhost:${PORT}/api/docs`);
       console.log(`🌐 CORS Origin: ${config.FRONTEND_URL}`);
       console.log(`📋 Health Check: http://localhost:${PORT}/health`);
     });
