@@ -144,9 +144,11 @@ export const addToCart = asyncHandler(async (req: CustomerAuthenticatedRequest, 
     throw new ValidationError('Product is out of stock');
   }
 
-  // Check stock availability
-  if (product.stock.available < quantity) {
-    throw new ValidationError(`Only ${product.stock.available} items available in stock`);
+  // Check stock availability - use inventory field if available in response, otherwise use stock
+  const productAny = product as any; // Type assertion to access inventory field
+  const availableStock = productAny.inventory?.availableForSale || product.stock.available || 0;
+  if (availableStock < quantity) {
+    throw new ValidationError(`Only ${availableStock} items available in stock`);
   }
 
   // Find or create cart
