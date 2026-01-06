@@ -1,21 +1,55 @@
 import { Response } from 'express';
 import mongoose from 'mongoose';
-import { Customer } from '../models/Customer.js';
-import { Product } from '../models/Product.js';
-import { Order } from '../models/Order.js';
-import { Payment } from '../models/Payment.js';
-import { CustomerAuthenticatedRequest } from '../middleware/customerAuthMiddleware.js';
-import { AppError } from '../middleware/errorMiddleware.js';
+import { z } from 'zod';
+import { Cart, Order, Payment, Product } from '../models';
+import { 
+  asyncHandler, 
+  ValidationError, 
+  NotFoundError,
+  AppError 
+} from '../middleware/errorMiddleware';
+import { CustomerAuthenticatedRequest } from '../middleware/customerAuthMiddleware';
+
+// Validation schemas
+const createOrderSchema = z.object({
+  shippingAddress: z.object({
+    street: z.string().min(5, 'Street address must be at least 5 characters'),
+    city: z.string().min(2, 'City name is required'),
+    state: z.string().min(2, 'State name is required'),
+    pincode: z.string().regex(/^\d{6}$/, 'Please enter a valid 6-digit pincode'),
+    country: z.string().optional().default('India'),
+    phone: z.string().regex(/^\d{10}$/, 'Please enter a valid 10-digit phone number')
+  }),
+  billingAddress: z.object({
+    street: z.string().min(5, 'Street address must be at least 5 characters'),
+    city: z.string().min(2, 'City name is required'),
+    state: z.string().min(2, 'State name is required'),
+    pincode: z.string().regex(/^\d{6}$/, 'Please enter a valid 6-digit pincode'),
+    country: z.string().optional().default('India'),
+    phone: z.string().regex(/^\d{10}$/, 'Please enter a valid 10-digit phone number')
+  }).optional(),
+  paymentMethod: z.enum(['cod', 'online'], {
+    required_error: 'Payment method is required',
+    invalid_type_error: 'Invalid payment method'
+  }),
+  appliedCoupons: z.array(z.object({
+    code: z.string(),
+    discount: z.number().min(0)
+  })).optional().default([])
+});
+
+const cancelOrderSchema = z.object({
+  reason: z.string().min(10, 'Cancellation reason must be at least 10 characters').max(500, 'Reason too long')
+});
 
 /**
  * @swagger
  * /api/v1/orders:
  *   post:
- *     summary: Place a new order
+ *     summary: Create a new order from cart
  *     tags: [Orders]
  *     security:
  *       - bearerAuth: []
- *       - cookieAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -25,168 +59,119 @@ import { AppError } from '../middleware/errorMiddleware.js';
  *             required:
  *               - shippingAddress
  *               - paymentMethod
- *             properties:
- *               shippingAddress:
- *                 type: object
- *                 required:
- *                   - street
- *                   - city
- *                   - state
- *                   - zipCode
- *                 properties:
- *                   street:
- *                     type: string
- *                     example: "123 Main Street"
- *                   city:
- *                     type: string
- *                     example: "New Delhi"
- *                   state:
- *                     type: string
- *                     example: "Delhi"
- *                   zipCode:
- *                     type: string
- *                     example: "110001"
- *                   country:
- *                     type: string
- *                     default: "India"
- *               billingAddress:
- *                 type: object
- *                 description: "If not provided, shipping address will be used"
- *               paymentMethod:
- *                 type: string
- *                 enum: [card, upi, cod, wallet]
- *                 example: "card"
- *     responses:
- *       201:
- *         description: Order placed successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Order placed successfully"
- *                 data:
- *                   $ref: '#/components/schemas/Order'
- *       400:
- *         description: Invalid order data or empty cart
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       401:
- *         description: Customer not authenticated
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
  */
-export const placeOrder = async (req: CustomerAuthenticatedRequest, res: Response) => {
+export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const validatedData = createOrderSchema.parse(req.body);
+  const { shippingAddress, billingAddress, paymentMethod, appliedCoupons } = validatedData;
+
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { shippingAddress, billingAddress, paymentMethod } = req.body;
+    // Get customer cart
+    const cart = await Cart.findOne({ customer: req.customer._id }).populate({
+      path: 'items.product',
+      select: 'name sku price stock isActive inStock'
+    }).session(session);
 
-    if (!shippingAddress) {
-      throw new AppError('Shipping address is required', 400);
+    if (!cart || cart.items.length === 0) {
+      throw new ValidationError('Cart is empty');
     }
 
-    // Find customer with cart items
-    const customer = await Customer.findById(req.customer?._id)
-      .populate('cart.product')
-      .session(session);
-
-    if (!customer) {
-      throw new AppError('Customer not found', 404);
-    }
-
-    if (!customer.cart || customer.cart.length === 0) {
-      throw new AppError('Cart is empty', 400);
-    }
-
-    // Validate cart items and check stock availability
+    // Validate cart items and stock
     const orderItems = [];
-    let subtotal = 0;
-
-    for (const cartItem of customer.cart) {
+    for (const cartItem of cart.items) {
       const product = cartItem.product as any;
       
-      if (!product || !product.isActive) {
-        throw new AppError(`Product ${product?.name || 'Unknown'} is no longer available`, 400);
+      if (!product || !product.isActive || !product.inStock) {
+        throw new ValidationError(`Product ${cartItem.name} is no longer available`);
       }
 
-      // Check stock availability
       if (product.stock.available < cartItem.quantity) {
-        throw new AppError(
-          `Insufficient stock for ${product.name}. Available: ${product.stock.available}`,
-          400
+        throw new ValidationError(
+          `Insufficient stock for ${product.name}. Available: ${product.stock.available}, Requested: ${cartItem.quantity}`
         );
       }
-
-      // Reserve stock
-      const stockReserved = await product.reserveStock(cartItem.quantity);
-      if (!stockReserved) {
-        throw new AppError(`Failed to reserve stock for ${product.name}`, 400);
-      }
-
-      const itemTotal = product.price.selling * cartItem.quantity;
-      subtotal += itemTotal;
 
       orderItems.push({
         product: product._id,
         name: product.name,
         sku: product.sku,
-        price: product.price.selling,
         quantity: cartItem.quantity,
-        selectedSize: cartItem.selectedSize,
-        selectedColor: cartItem.selectedColor,
-        total: itemTotal
+        price: cartItem.price,
+        variants: cartItem.variants || {},
+        total: cartItem.price * cartItem.quantity
       });
     }
 
-    // Calculate totals
-    const tax = Math.round(subtotal * 0.18); // 18% GST
-    const shipping = subtotal >= 500 ? 0 : 50; // Free shipping above ₹500
-    const total = subtotal + tax + shipping;
+    // Calculate order totals
+    const subtotal = orderItems.reduce((sum, item) => sum + item.total, 0);
+    let discount = 0;
+    
+    // Apply coupons (simplified - you can enhance this)
+    for (const coupon of appliedCoupons) {
+      discount += coupon.discount;
+    }
+
+    const tax = Math.round((subtotal - discount) * 0.18 * 100) / 100; // 18% GST
+    const shipping = subtotal > 500 ? 0 : 50; // Free shipping above ₹500
+    const total = Math.round((subtotal - discount + tax + shipping) * 100) / 100;
+
+    // Generate order number
+    const date = new Date();
+    const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+    const timeStr = date.getTime().toString().slice(-6);
+    const orderNumber = `ORD-${dateStr}-${timeStr}`;
 
     // Create order
     const order = new Order({
-      user: customer._id,
+      orderNumber,
+      user: req.customer._id,
       items: orderItems,
       totals: {
         subtotal,
+        discount,
         tax,
         shipping,
-        discount: 0,
         total
       },
+      appliedCoupons,
       shippingAddress,
       billingAddress: billingAddress || shippingAddress,
-      paymentMethod: paymentMethod || 'online',
       status: 'PENDING',
-      paymentStatus: 'PENDING'
+      paymentStatus: paymentMethod === 'cod' ? 'PENDING' : 'PENDING',
+      paymentMethod,
+      statusHistory: [{
+        status: 'PENDING',
+        timestamp: new Date()
+      }]
     });
 
-    // Generate order number
-    order.orderNumber = `ORD-${Date.now().toString().slice(-8)}-${Math.random().toString().slice(2, 6)}`;
-    
+    // Reserve stock for all items
+    for (const item of orderItems) {
+      const product = await Product.findById(item.product).session(session);
+      if (!product || !(await product.reserveStock(item.quantity))) {
+        throw new ValidationError(`Failed to reserve stock for ${item.name}`);
+      }
+    }
+
     await order.save({ session });
 
     // Create payment record
     const payment = new Payment({
+      paymentId: `PAY${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
       order: order._id,
-      customer: customer._id,
+      customer: req.customer._id,
       amount: total,
+      currency: 'INR',
       method: paymentMethod === 'cod' ? 'COD' : 'CARD',
       status: paymentMethod === 'cod' ? 'PENDING' : 'INITIATED',
       gateway: {
-        provider: 'RAZORPAY',
-        gatewayOrderId: `order_${Date.now()}`
+        provider: 'RAZORPAY'
       },
       metadata: {
         userAgent: req.headers['user-agent'],
@@ -201,220 +186,221 @@ export const placeOrder = async (req: CustomerAuthenticatedRequest, res: Respons
     order.paymentId = payment._id;
     await order.save({ session });
 
-    // Clear customer cart
-    customer.cart = [];
-    await customer.save({ session });
+    // Clear cart after successful order creation
+    await Cart.findOneAndUpdate(
+      { customer: req.customer._id },
+      { $set: { items: [] } },
+      { session }
+    );
 
     await session.commitTransaction();
 
     res.status(201).json({
       success: true,
-      message: 'Order placed successfully',
+      message: 'Order created successfully',
       data: {
-        order: {
-          _id: order._id,
-          orderNumber: order.orderNumber,
-          total: order.totals.total,
-          status: order.status,
-          paymentStatus: order.paymentStatus
-        },
-        payment: {
-          _id: payment._id,
-          paymentId: payment.paymentId,
-          amount: payment.amount,
-          method: payment.method,
-          status: payment.status
-        }
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        total: order.totals.total,
+        paymentId: payment.paymentId,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        paymentMethod: order.paymentMethod
       }
     });
 
-  } catch (error: any) {
+  } catch (error) {
     await session.abortTransaction();
-    throw new AppError(error.message || 'Failed to place order', error.statusCode || 500);
+    throw error;
   } finally {
     session.endSession();
   }
-};
+});
 
-// Get customer orders
-export const getOrders = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
-    const skip = (page - 1) * limit;
-
-    const orders = await Order.find({ user: req.customer?._id })
-      .populate('items.product', 'name images slug')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const totalOrders = await Order.countDocuments({ user: req.customer?._id });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        orders,
-        pagination: {
-          currentPage: page,
-          totalPages: Math.ceil(totalOrders / limit),
-          totalOrders,
-          hasNext: page < Math.ceil(totalOrders / limit),
-          hasPrev: page > 1
-        }
-      }
-    });
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to fetch orders', error.statusCode || 500);
+/**
+ * @swagger
+ * /api/v1/orders:
+ *   get:
+ *     summary: Get customer's orders
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getOrders = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
   }
-};
 
-// Get order by ID
-export const getOrderById = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  try {
-    const { orderId } = req.params;
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const status = req.query.status as string;
 
-    const order = await Order.findOne({
-      _id: orderId,
-      user: req.customer?._id
-    }).populate('items.product', 'name images slug sku');
-
-    if (!order) {
-      throw new AppError('Order not found', 404);
-    }
-
-    res.status(200).json({
-      success: true,
-      data: order
-    });
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to fetch order', error.statusCode || 500);
+  const filter: any = { user: req.customer._id };
+  if (status) {
+    filter.status = status;
   }
-};
 
-// Cancel order
-export const cancelOrder = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  const orders = await Order.find(filter)
+    .populate({
+      path: 'items.product',
+      select: 'name slug images'
+    })
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit);
 
-  try {
-    const { orderId } = req.params;
-    const { reason } = req.body;
+  const total = await Order.countDocuments(filter);
 
-    // Find order
-    const order = await Order.findOne({
-      _id: orderId,
-      user: req.customer?._id
-    }).session(session);
+  const formattedOrders = orders.map(order => ({
+    _id: order._id,
+    orderNumber: order.orderNumber,
+    status: order.status,
+    paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod,
+    totals: order.totals,
+    itemsCount: order.items.length,
+    totalItems: order.items.reduce((sum, item) => sum + item.quantity, 0),
+    createdAt: order.createdAt,
+    canCancel: order.canBeCancelled(),
+    items: order.items.map(item => ({
+      name: item.name,
+      sku: item.sku,
+      quantity: item.quantity,
+      price: item.price,
+      total: item.total,
+      product: (item.product as any) ? {
+        _id: (item.product as any)._id,
+        name: (item.product as any).name,
+        slug: (item.product as any).slug,
+        images: (item.product as any).images
+      } : null
+    }))
+  }));
 
-    if (!order) {
-      throw new AppError('Order not found', 404);
-    }
-
-    // Check if order can be cancelled
-    if (!['PENDING', 'PAID'].includes(order.status)) {
-      throw new AppError('Order cannot be cancelled at this stage', 400);
-    }
-
-    // Restore stock for all items
-    for (const item of order.items) {
-      const product = await Product.findById(item.product).session(session);
-      if (product) {
-        await product.releaseStock(item.quantity);
+  res.json({
+    success: true,
+    data: {
+      orders: formattedOrders,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
       }
     }
+  });
+});
 
-    // Update order status
-    order.status = 'CANCELLED';
-    order.cancelledAt = new Date();
-    order.cancellationReason = reason || 'Cancelled by customer';
-
-    // Add to status history
-    order.statusHistory.push({
-      status: 'CANCELLED',
-      timestamp: new Date(),
-      note: reason || 'Cancelled by customer'
-    });
-
-    await order.save({ session });
-
-    // Process refund if payment was made
-    if (order.paymentStatus === 'PAID' && order.paymentId) {
-      const payment = await Payment.findById(order.paymentId).session(session);
-      if (payment) {
-        const refundProcessed = await payment.processRefund(
-          payment.amount,
-          reason || 'Order cancelled by customer'
-        );
-        
-        if (refundProcessed) {
-          order.paymentStatus = 'REFUNDED';
-          await order.save({ session });
-        }
-      }
-    }
-
-    await session.commitTransaction();
-
-    res.status(200).json({
-      success: true,
-      message: 'Order cancelled successfully',
-      data: {
-        order: {
-          _id: order._id,
-          orderNumber: order.orderNumber,
-          status: order.status,
-          cancelledAt: order.cancelledAt,
-          cancellationReason: order.cancellationReason
-        }
-      }
-    });
-
-  } catch (error: any) {
-    await session.abortTransaction();
-    throw new AppError(error.message || 'Failed to cancel order', error.statusCode || 500);
-  } finally {
-    session.endSession();
+/**
+ * @swagger
+ * /api/v1/orders/{orderId}:
+ *   get:
+ *     summary: Get order details
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getOrderById = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
   }
-};
 
-// Get order statistics
-export const getOrderStats = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  try {
-    const customerId = req.customer?._id;
+  const { orderId } = req.params;
 
-    const stats = await Order.aggregate([
-      { $match: { user: customerId } },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$totals.total' }
-        }
-      }
-    ]);
-
-    const totalOrders = await Order.countDocuments({ user: customerId });
-    const totalSpent = await Order.aggregate([
-      { $match: { user: customerId, status: { $ne: 'CANCELLED' } } },
-      { $group: { _id: null, total: { $sum: '$totals.total' } } }
-    ]);
-
-    res.status(200).json({
-      success: true,
-      data: {
-        totalOrders,
-        totalSpent: totalSpent[0]?.total || 0,
-        statusBreakdown: stats.reduce((acc, stat) => {
-          acc[stat._id] = {
-            count: stat.count,
-            totalAmount: stat.totalAmount
-          };
-          return acc;
-        }, {})
-      }
+  const order = await Order.findOne({ _id: orderId, user: req.customer._id })
+    .populate({
+      path: 'items.product',
+      select: 'name slug images category'
+    })
+    .populate({
+      path: 'paymentId',
+      select: 'paymentId method status gateway refund'
     });
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to fetch order statistics', error.statusCode || 500);
+
+  if (!order) {
+    throw new NotFoundError('Order not found');
   }
-};
+
+  res.json({
+    success: true,
+    data: {
+      _id: order._id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      paymentMethod: order.paymentMethod,
+      items: order.items,
+      totals: order.totals,
+      appliedCoupons: order.appliedCoupons,
+      shippingAddress: order.shippingAddress,
+      billingAddress: order.billingAddress,
+      statusHistory: order.statusHistory,
+      tracking: order.tracking,
+      notes: order.notes,
+      cancelledAt: order.cancelledAt,
+      cancellationReason: order.cancellationReason,
+      createdAt: order.createdAt,
+      canCancel: order.canBeCancelled(),
+      payment: order.paymentId
+    }
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/orders/{orderId}/cancel:
+ *   post:
+ *     summary: Cancel an order
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const cancelOrder = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const { orderId } = req.params;
+  const validatedData = cancelOrderSchema.parse(req.body);
+  const { reason } = validatedData;
+
+  const order = await Order.findOne({ _id: orderId, user: req.customer._id });
+  if (!order) {
+    throw new NotFoundError('Order not found');
+  }
+
+  if (!order.canBeCancelled()) {
+    throw new ValidationError(`Order cannot be cancelled. Current status: ${order.status}`);
+  }
+
+  // Cancel the order (this will handle stock release and refund)
+  const cancelled = await order.cancelOrder(reason, req.customer._id.toString());
+  
+  if (!cancelled) {
+    throw new AppError('Failed to cancel order', 500);
+  }
+
+  res.json({
+    success: true,
+    message: 'Order cancelled successfully',
+    data: {
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      cancelledAt: order.cancelledAt,
+      cancellationReason: order.cancellationReason
+    }
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/orders/{orderId}/status:
+ *   put:
+ *     summary: Update order status (Admin only - but including for completeness)
+ */
+export const updateOrderStatus = asyncHandler(async (_req: CustomerAuthenticatedRequest, _res: Response) => {
+  // This would typically be admin-only, but including for completeness
+  throw new ValidationError('This endpoint is for admin use only');
+});
