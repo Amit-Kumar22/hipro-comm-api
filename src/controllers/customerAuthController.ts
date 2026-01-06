@@ -116,7 +116,8 @@ const pendingRegistrations = new Map<string, {
 
 // Helper function to generate OTP
 const generateOTP = () => {
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  // In development, use fixed OTP for easier testing
+  const otp = process.env.NODE_ENV === 'development' ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = new Date();
   expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiry
   return { otp, expiresAt };
@@ -154,6 +155,11 @@ export const registerCustomer = asyncHandler(async (req: Request, res: Response)
 
   // Generate OTP
   const { otp, expiresAt } = generateOTP();
+  
+  // In development mode, log OTP to console for testing
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`🔐 [DEV] OTP for ${validatedData.email}: ${otp} (expires at ${expiresAt})`);
+  }
   
   // Store registration data temporarily
   pendingRegistrations.set(validatedData.email, {
