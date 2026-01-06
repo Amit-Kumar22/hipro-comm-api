@@ -107,6 +107,26 @@ const generateCustomerToken = (payload: CustomerJWTPayload): string => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
+// Temporary storage for pending registrations (in production, use Redis)
+const pendingRegistrations = new Map<string, {
+  userData: any;
+  otp: string;
+  expiresAt: Date;
+}>();
+
+// Helper function to generate OTP
+const generateOTP = () => {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date();
+  expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiry
+  return { otp, expiresAt };
+};
+
+// Helper function to validate OTP
+const isOTPValid = (storedOTP: string, storedExpiry: Date, providedOTP: string): boolean => {
+  return storedOTP === providedOTP && new Date() <= storedExpiry;
+};
+
 const getCookieOptions = () => ({
   httpOnly: true,
   secure: config.NODE_ENV === 'production',
@@ -122,55 +142,46 @@ export const registerCustomer = asyncHandler(async (req: Request, res: Response)
   // Check if customer already exists
   const existingCustomer = await Customer.findOne({ email: validatedData.email });
   if (existingCustomer) {
-    if (existingCustomer.isEmailVerified) {
-      throw new ValidationError('Account already exists with this email');
-    } else {
-      // If user exists but not verified, generate new OTP and resend
-      const otpData = existingCustomer.generateOTP();
-      await existingCustomer.save();
-      
-      await emailService.sendOTPEmail(existingCustomer.email, {
-        name: existingCustomer.name,
-        otp: otpData.code
-      });
-      
-      res.status(200).json({
-        success: true,
-        message: 'Account already exists but not verified. New OTP sent to your email.'
-      });
-      return;
-    }
+    throw new ValidationError('Account already exists with this email');
   }
 
-  // Create new customer
-  const customer = new Customer(validatedData);
-  
+  // Check if there's already a pending registration for this email
+  const existingPending = pendingRegistrations.get(validatedData.email);
+  if (existingPending) {
+    // Remove old pending registration
+    pendingRegistrations.delete(validatedData.email);
+  }
+
   // Generate OTP
-  const otpData = customer.generateOTP();
+  const { otp, expiresAt } = generateOTP();
   
-  // Save customer
-  await customer.save();
+  // Store registration data temporarily
+  pendingRegistrations.set(validatedData.email, {
+    userData: validatedData,
+    otp,
+    expiresAt
+  });
 
   // Send OTP email
   try {
-    await emailService.sendOTPEmail(customer.email, {
-      name: customer.name,
-      otp: otpData.code
+    await emailService.sendOTPEmail(validatedData.email, {
+      name: validatedData.name,
+      otp
     });
   } catch (error) {
-    // If email fails, remove the customer and throw error
-    await Customer.findByIdAndDelete(customer._id);
+    // If email fails, remove pending registration
+    pendingRegistrations.delete(validatedData.email);
     console.error('Email sending failed:', error);
     throw new BadRequestError('Failed to send verification email. Please try again.');
   }
 
-  res.status(201).json({
+  res.status(200).json({
     success: true,
-    message: 'Registration successful! Please check your email for verification code.',
+    message: 'Please check your email for verification code to complete registration.',
     data: {
-      email: customer.email,
-      name: customer.name,
-      otpExpiresAt: otpData.expiresAt
+      email: validatedData.email,
+      name: validatedData.name,
+      otpExpiresAt: expiresAt
     }
   });
 });
@@ -179,35 +190,37 @@ export const registerCustomer = asyncHandler(async (req: Request, res: Response)
 export const verifyOTP = asyncHandler(async (req: Request, res: Response) => {
   const { email, otp } = verifyOTPSchema.parse(req.body);
 
-  // Find customer
-  const customer = await Customer.findOne({ email }).select('+otp');
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
-  }
-
-  if (customer.isEmailVerified) {
-    throw new ValidationError('Email is already verified');
+  // Check for pending registration
+  const pendingRegistration = pendingRegistrations.get(email);
+  if (!pendingRegistration) {
+    throw new NotFoundError('No pending registration found for this email');
   }
 
   // Validate OTP
-  if (!customer.isOTPValid(otp)) {
+  if (!isOTPValid(pendingRegistration.otp, pendingRegistration.expiresAt, otp)) {
     throw new ValidationError('Invalid or expired OTP');
   }
 
-  // Mark email as verified and clear OTP
-  customer.isEmailVerified = true;
-  customer.otp = undefined;
-  await customer.save();
-
-  // Send welcome email
-  try {
-    await emailService.sendWelcomeEmail(customer.email, customer.name);
-  } catch (emailError) {
-    console.error('Failed to send welcome email:', emailError);
-    // Don't fail the verification if welcome email fails
+  // Check if customer already exists (safety check)
+  const existingCustomer = await Customer.findOne({ email });
+  if (existingCustomer) {
+    // Remove pending registration
+    pendingRegistrations.delete(email);
+    throw new ValidationError('Account already exists with this email');
   }
 
-  // Generate token
+  // Create the customer account
+  const customer = new Customer({
+    ...pendingRegistration.userData,
+    isEmailVerified: true // Mark as verified since OTP is confirmed
+  });
+
+  await customer.save();
+
+  // Remove pending registration
+  pendingRegistrations.delete(email);
+
+  // Generate token for auto-login
   const token = generateCustomerToken({
     customerId: customer._id.toString(),
     email: customer.email,
@@ -217,9 +230,9 @@ export const verifyOTP = asyncHandler(async (req: Request, res: Response) => {
   // Set cookie
   res.cookie('customerToken', token, getCookieOptions());
 
-  res.status(200).json({
+  res.status(201).json({
     success: true,
-    message: 'Email verified successfully! Welcome to HiPro Commerce.',
+    message: 'Account created successfully! You are now logged in.',
     data: {
       customer: {
         id: customer._id,
@@ -237,30 +250,33 @@ export const verifyOTP = asyncHandler(async (req: Request, res: Response) => {
 export const resendOTP = asyncHandler(async (req: Request, res: Response) => {
   const { email } = resendOTPSchema.parse(req.body);
 
-  const customer = await Customer.findOne({ email });
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
-  }
-
-  if (customer.isEmailVerified) {
-    throw new ValidationError('Email is already verified');
+  // Check for pending registration
+  const pendingRegistration = pendingRegistrations.get(email);
+  if (!pendingRegistration) {
+    throw new NotFoundError('No pending registration found for this email');
   }
 
   // Generate new OTP
-  const otpData = customer.generateOTP();
-  await customer.save();
+  const { otp, expiresAt } = generateOTP();
+  
+  // Update pending registration with new OTP
+  pendingRegistrations.set(email, {
+    ...pendingRegistration,
+    otp,
+    expiresAt
+  });
 
   // Send OTP email
-  await emailService.sendOTPEmail(customer.email, {
-    name: customer.name,
-    otp: otpData.code
+  await emailService.sendOTPEmail(email, {
+    name: pendingRegistration.userData.name,
+    otp
   });
 
   res.status(200).json({
     success: true,
     message: 'New verification code sent to your email',
     data: {
-      otpExpiresAt: otpData.expiresAt
+      otpExpiresAt: expiresAt
     }
   });
 });

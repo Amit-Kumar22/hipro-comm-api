@@ -3,9 +3,10 @@ import {
   getCart,
   addToCart,
   updateCartItem,
-  removeFromCart,
+  removeCartItem,
   clearCart,
-  getCartItemsCount
+  validateCart,
+  getCartCount
 } from '../controllers/cartController';
 import { authenticateCustomer } from '../middleware/customerAuthMiddleware';
 
@@ -15,11 +16,12 @@ const router = Router();
 router.use(authenticateCustomer);
 
 // Cart management routes
-router.get('/', getCart);
-router.post('/add', addToCart);
-router.put('/item/:itemId', updateCartItem);
-router.delete('/item/:itemId', removeFromCart);
-router.delete('/clear', clearCart);
-router.get('/count', getCartItemsCount);
+router.get('/', getCart);                    // Get cart
+router.post('/add', addToCart);              // Add item to cart
+router.put('/item/:itemId', updateCartItem); // Update item quantity
+router.delete('/item/:itemId', removeCartItem); // Remove item from cart
+router.delete('/clear', clearCart);          // Clear entire cart
+router.post('/validate', validateCart);      // Validate cart before checkout
+router.get('/count', getCartCount);          // Get cart items count
 
 export default router;

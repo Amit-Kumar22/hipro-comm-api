@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { authenticateCustomer } from '../middleware/customerAuthMiddleware.js';
 import {
-  processPayment,
+  initiatePayment,
+  verifyPayment,
   getPaymentHistory,
   getPaymentById,
-  requestRefund,
-  getPaymentStats
+  processRefund,
+  simulatePaymentSuccess,
+  simulatePaymentFailure
 } from '../controllers/paymentController.js';
 
 const router = Router();
@@ -13,19 +15,23 @@ const router = Router();
 // All routes require customer authentication
 router.use(authenticateCustomer);
 
-// Process payment
-router.post('/process', processPayment);
+// Initiate payment for an order
+router.post('/initiate', initiatePayment);
+
+// Verify payment after gateway response
+router.post('/verify', verifyPayment);
 
 // Get payment history
-router.get('/', getPaymentHistory);
+router.get('/history', getPaymentHistory);
 
-// Get payment statistics
-router.get('/stats', getPaymentStats);
-
-// Get specific payment
+// Get specific payment details
 router.get('/:paymentId', getPaymentById);
 
-// Request refund
-router.post('/:paymentId/refund', requestRefund);
+// Process refund
+router.post('/refund', processRefund);
+
+// Simulation routes (for testing)
+router.post('/simulate/success', simulatePaymentSuccess);
+router.post('/simulate/failure', simulatePaymentFailure);
 
 export default router;

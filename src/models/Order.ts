@@ -82,6 +82,16 @@ export interface IOrder extends Document {
   cancellationReason?: string;
   createdAt: Date;
   updatedAt: Date;
+
+  // Methods
+  canBeCancelled(): boolean;
+  cancelOrder(reason: string, userId?: string): Promise<boolean>;
+  updateStatus(newStatus: OrderStatus, note?: string, userId?: string): Promise<IOrder>;
+  processRefund(): Promise<boolean>;
+  reserveStock(): Promise<boolean>;
+  releaseStock(): Promise<boolean>;
+  confirmSale(): Promise<boolean>;
+  generateOrderNumber(): string;
 }
 
 // Order Schema
@@ -355,5 +365,132 @@ OrderSchema.virtual('canCancel').get(function(this: IOrder) {
 OrderSchema.virtual('canReturn').get(function(this: IOrder) {
   return this.status === 'DELIVERED' && this.paymentStatus !== 'REFUNDED';
 });
+
+// Methods
+OrderSchema.methods.canBeCancelled = function(): boolean {
+  return ['PENDING', 'PAID'].includes(this.status);
+};
+
+OrderSchema.methods.cancelOrder = async function(reason: string, userId?: string): Promise<boolean> {
+  if (!this.canBeCancelled()) {
+    throw new Error('Order cannot be cancelled in current status');
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Update order status
+    this.status = 'CANCELLED';
+    this.paymentStatus = this.paymentStatus === 'PAID' ? 'REFUNDED' : this.paymentStatus;
+    this.cancelledAt = new Date();
+    this.cancellationReason = reason;
+
+    // Add status history
+    this.statusHistory.push({
+      status: 'CANCELLED',
+      timestamp: new Date(),
+      note: reason,
+      updatedBy: userId as any
+    });
+
+    // Release reserved stock
+    await this.releaseStock();
+
+    // Process refund if paid
+    if (this.paymentStatus === 'REFUNDED') {
+      await this.processRefund();
+    }
+
+    await this.save({ session });
+    await session.commitTransaction();
+    return true;
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
+};
+
+OrderSchema.methods.updateStatus = async function(newStatus: OrderStatus, note?: string, userId?: string): Promise<IOrder> {
+  const validTransitions: Record<OrderStatus, OrderStatus[]> = {
+    'PENDING': ['PAID', 'CANCELLED'],
+    'PAID': ['SHIPPED', 'CANCELLED'],
+    'SHIPPED': ['DELIVERED'],
+    'DELIVERED': [],
+    'CANCELLED': []
+  };
+
+  const currentStatus = this.status as OrderStatus;
+  if (!validTransitions[currentStatus]?.includes(newStatus)) {
+    throw new Error(`Invalid status transition from ${currentStatus} to ${newStatus}`);
+  }
+
+  this.status = newStatus;
+  this.statusHistory.push({
+    status: newStatus,
+    timestamp: new Date(),
+    note,
+    updatedBy: userId as any
+  });
+
+  return await this.save();
+};
+
+OrderSchema.methods.processRefund = async function(): Promise<boolean> {
+  if (this.paymentId) {
+    const Payment = mongoose.model('Payment');
+    const payment = await Payment.findById(this.paymentId);
+    
+    if (payment && payment.canBeRefunded()) {
+      return await payment.processRefund(this.totals.total, 'Order cancelled');
+    }
+  }
+  return false;
+};
+
+OrderSchema.methods.reserveStock = async function(): Promise<boolean> {
+  const Product = mongoose.model('Product');
+  
+  for (const item of this.items) {
+    const product = await Product.findById(item.product);
+    if (!product || !(await product.reserveStock(item.quantity))) {
+      return false;
+    }
+  }
+  return true;
+};
+
+OrderSchema.methods.releaseStock = async function(): Promise<boolean> {
+  const Product = mongoose.model('Product');
+  
+  for (const item of this.items) {
+    const product = await Product.findById(item.product);
+    if (product) {
+      await product.releaseStock(item.quantity);
+    }
+  }
+  return true;
+};
+
+OrderSchema.methods.confirmSale = async function(): Promise<boolean> {
+  const Product = mongoose.model('Product');
+  
+  for (const item of this.items) {
+    const product = await Product.findById(item.product);
+    if (!product || !(await product.confirmSale(item.quantity))) {
+      return false;
+    }
+  }
+  return true;
+};
+
+OrderSchema.methods.generateOrderNumber = function(): string {
+  const date = new Date();
+  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+  const timeStr = date.getTime().toString().slice(-4);
+  return `ORD-${dateStr}-${timeStr}`;
+};
 
 export const Order = mongoose.model<IOrder>('Order', OrderSchema);

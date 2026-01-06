@@ -1,19 +1,20 @@
 import { Response } from 'express';
 import { z } from 'zod';
-import { Customer, Product } from '../models';
+import { Cart, Product } from '../models';
 import { 
   asyncHandler, 
   ValidationError, 
-  NotFoundError 
+  NotFoundError
 } from '../middleware/errorMiddleware';
 import { CustomerAuthenticatedRequest } from '../middleware/customerAuthMiddleware';
 
 // Validation schemas
 const addToCartSchema = z.object({
   productId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid product ID'),
-  quantity: z.number().min(1, 'Quantity must be at least 1').max(100, 'Maximum quantity is 100'),
+  quantity: z.number().min(1, 'Quantity must be at least 1').max(100, 'Maximum quantity is 100').optional().default(1),
   selectedSize: z.string().optional(),
-  selectedColor: z.string().optional()
+  selectedColor: z.string().optional(),
+  variants: z.record(z.string(), z.string()).optional()
 });
 
 const updateCartItemSchema = z.object({
@@ -32,79 +33,40 @@ const updateCartItemSchema = z.object({
  *     responses:
  *       200:
  *         description: Cart retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   properties:
- *                     items:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           _id:
- *                             type: string
- *                           product:
- *                             $ref: '#/components/schemas/Product'
- *                           quantity:
- *                             type: integer
- *                           selectedSize:
- *                             type: string
- *                           selectedColor:
- *                             type: string
- *                           unitPrice:
- *                             type: number
- *                           totalPrice:
- *                             type: number
- *                     summary:
- *                       type: object
- *                       properties:
- *                         totalItems:
- *                           type: integer
- *                         totalPrice:
- *                           type: number
- *       401:
- *         description: Customer not authenticated
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
  */
 export const getCart = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');
   }
 
-  const customer = await Customer.findById(req.customer._id)
-    .populate({
-      path: 'cart.product',
-      select: 'name slug price images category sku inStock',
-      populate: {
-        path: 'category',
-        select: 'name slug'
-      }
-    });
+  // Find or create cart for customer
+  const cart = await Cart.findOrCreateCart(req.customer._id.toString());
 
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
+  // Populate product details
+  await cart.populate({
+    path: 'items.product',
+    select: 'name slug price images category sku isActive inStock stock',
+    populate: {
+      path: 'category',
+      select: 'name slug'
+    }
+  });
+
+  // Filter out items with inactive/deleted products
+  const validItems = cart.items.filter((item: any) => {
+    const product = item.product;
+    return product && product.isActive && product.inStock;
+  });
+
+  // Remove invalid items from cart
+  if (validItems.length !== cart.items.length) {
+    cart.items = validItems;
+    await cart.save();
   }
 
-  // Calculate cart totals
-  let totalItems = 0;
-  let totalPrice = 0;
-
-  const cartItems = customer.cart.map((item: any) => {
-    const product = item.product as any;
-    const itemTotal = product.price.selling * item.quantity;
-    totalItems += item.quantity;
-    totalPrice += itemTotal;
-
+  // Format response
+  const cartItems = cart.items.map((item: any) => {
+    const product = item.product;
     return {
       id: item._id,
       product: {
@@ -115,12 +77,15 @@ export const getCart = asyncHandler(async (req: CustomerAuthenticatedRequest, re
         images: product.images,
         category: product.category,
         sku: product.sku,
-        inStock: product.inStock
+        inStock: product.inStock,
+        availableStock: product.stock.available
       },
       quantity: item.quantity,
       selectedSize: item.selectedSize,
       selectedColor: item.selectedColor,
-      itemTotal
+      variants: item.variants,
+      itemTotal: item.price * item.quantity,
+      addedAt: item.addedAt
     };
   });
 
@@ -128,27 +93,20 @@ export const getCart = asyncHandler(async (req: CustomerAuthenticatedRequest, re
     success: true,
     data: {
       items: cartItems,
-      totals: {
-        totalItems,
-        totalPrice,
-        subtotal: totalPrice,
-        tax: totalPrice * 0.18, // 18% GST
-        shipping: totalPrice > 500 ? 0 : 50, // Free shipping above ₹500
-        total: totalPrice + (totalPrice * 0.18) + (totalPrice > 500 ? 0 : 50)
-      }
+      totals: cart.totals,
+      lastActivity: cart.lastActivity
     }
   });
 });
 
 /**
  * @swagger
- * /api/v1/cart:
+ * /api/v1/cart/add:
  *   post:
  *     summary: Add item to cart
  *     tags: [Cart]
  *     security:
  *       - bearerAuth: []
- *       - cookieAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -157,41 +115,12 @@ export const getCart = asyncHandler(async (req: CustomerAuthenticatedRequest, re
  *             type: object
  *             required:
  *               - productId
- *               - quantity
  *             properties:
  *               productId:
  *                 type: string
- *                 example: "64f8b0123456789abcdef123"
  *               quantity:
- *                 type: integer
- *                 minimum: 1
- *                 maximum: 100
- *                 example: 2
- *               selectedSize:
- *                 type: string
- *                 example: "M"
- *               selectedColor:
- *                 type: string
- *                 example: "Red"
- *     responses:
- *       200:
- *         description: Item added to cart successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/SuccessResponse'
- *       400:
- *         description: Validation error or product not available
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       401:
- *         description: Customer not authenticated
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
+ *                 type: number
+ *                 default: 1
  */
 export const addToCart = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
@@ -199,167 +128,320 @@ export const addToCart = asyncHandler(async (req: CustomerAuthenticatedRequest, 
   }
 
   const validatedData = addToCartSchema.parse(req.body);
+  const { productId, quantity, selectedSize, selectedColor, variants } = validatedData;
 
-  // Check if product exists and is active
-  const product = await Product.findById(validatedData.productId);
-  if (!product || !product.isActive) {
-    throw new NotFoundError('Product not found or inactive');
+  // Find product and validate
+  const product = await Product.findById(productId);
+  if (!product) {
+    throw new NotFoundError('Product not found');
   }
 
-  // Check if product is in stock
+  if (!product.isActive) {
+    throw new ValidationError('Product is not available');
+  }
+
   if (!product.inStock) {
     throw new ValidationError('Product is out of stock');
   }
 
-  const customer = await Customer.findById(req.customer._id);
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
+  // Check stock availability
+  if (product.stock.available < quantity) {
+    throw new ValidationError(`Only ${product.stock.available} items available in stock`);
   }
 
-  // Create unique item identifier based on product and variants
-  const itemIdentifier = `${validatedData.productId}-${validatedData.selectedSize || 'default'}-${validatedData.selectedColor || 'default'}`;
+  // Find or create cart
+  const cart = await Cart.findOrCreateCart(req.customer._id.toString());
 
-  // Check if item already exists in cart
-  const existingItemIndex = customer.cart.findIndex((item: any) => {
-    const existingItemIdentifier = `${item.product}-${item.selectedSize || 'default'}-${item.selectedColor || 'default'}`;
-    return existingItemIdentifier === itemIdentifier;
-  });
+  // Check if item already exists in cart (same product + variants)
+  const existingItemIndex = cart.items.findIndex((item: any) => 
+    item.product.toString() === productId &&
+    item.selectedSize === selectedSize &&
+    item.selectedColor === selectedColor &&
+    JSON.stringify(item.variants || {}) === JSON.stringify(variants || {})
+  );
 
   if (existingItemIndex > -1) {
-    // Update quantity of existing item
-    const existingItem = customer.cart[existingItemIndex];
-    (existingItem as any).quantity += validatedData.quantity;
+    // Update existing item quantity
+    const existingItem = cart.items[existingItemIndex];
+    if (!existingItem) {
+      throw new ValidationError('Cart item not found');
+    }
+    
+    const newQuantity = existingItem.quantity + quantity;
+    
+    // Check stock for new total quantity
+    if (product.stock.available < newQuantity) {
+      throw new ValidationError(`Only ${product.stock.available} items available. You have ${existingItem.quantity} in cart.`);
+    }
+
+    existingItem.quantity = newQuantity;
+    existingItem.updatedAt = new Date();
   } else {
     // Add new item to cart
-    (customer.cart as any).push({
-      product: validatedData.productId,
-      quantity: validatedData.quantity,
-      selectedSize: validatedData.selectedSize,
-      selectedColor: validatedData.selectedColor,
-      addedAt: new Date()
-    });
+    cart.items.push({
+      product: product._id,
+      name: product.name,
+      sku: product.sku,
+      price: product.price.selling,
+      quantity,
+      selectedSize,
+      selectedColor,
+      variants: variants || {},
+      addedAt: new Date(),
+      updatedAt: new Date()
+    } as any);
   }
 
-  await customer.save();
+  await cart.save();
 
-  res.status(200).json({
+  // Reserve stock temporarily (optional - can be done at checkout)
+  // await product.reserveStock(quantity);
+
+  res.status(201).json({
     success: true,
-    message: 'Product added to cart successfully',
+    message: 'Item added to cart successfully',
     data: {
-      cartItemsCount: customer.cart.length
+      cartItemsCount: cart.totals.totalItems,
+      cartTotal: cart.totals.total
     }
   });
 });
 
-// Update cart item quantity
+/**
+ * @swagger
+ * /api/v1/cart/item/{itemId}:
+ *   put:
+ *     summary: Update cart item quantity
+ */
 export const updateCartItem = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');
   }
 
   const { itemId } = req.params;
-  const { quantity } = updateCartItemSchema.parse(req.body);
+  const validatedData = updateCartItemSchema.parse(req.body);
+  const { quantity } = validatedData;
 
-  const customer = await Customer.findById(req.customer._id);
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
+  // Find cart
+  const cart = await Cart.findOne({ customer: req.customer._id });
+  if (!cart) {
+    throw new NotFoundError('Cart not found');
   }
 
-  const itemIndex = customer.cart.findIndex((item: any) => item._id?.toString() === itemId);
+  // Find cart item
+  const itemIndex = cart.items.findIndex((item: any) => item._id.toString() === itemId);
   if (itemIndex === -1) {
+    throw new NotFoundError('Item not found in cart');
+  }
+
+  const cartItem = cart.items[itemIndex];
+  if (!cartItem) {
     throw new NotFoundError('Cart item not found');
   }
 
   if (quantity === 0) {
-    // Remove item if quantity is 0
-    customer.cart.splice(itemIndex, 1);
+    // Remove item from cart
+    cart.items.splice(itemIndex, 1);
   } else {
+    // Validate stock availability
+    const product = await Product.findById(cartItem.product);
+    if (!product) {
+      throw new NotFoundError('Product not found');
+    }
+
+    if (product.stock.available < quantity) {
+      throw new ValidationError(`Only ${product.stock.available} items available in stock`);
+    }
+
     // Update quantity
-    (customer.cart[itemIndex] as any).quantity = quantity;
+    const updateItem = cart.items[itemIndex];
+    if (updateItem) {
+      updateItem.quantity = quantity;
+      updateItem.updatedAt = new Date();
+    }
   }
 
-  await customer.save();
+  await cart.save();
 
-  res.status(200).json({
+  res.json({
     success: true,
     message: quantity === 0 ? 'Item removed from cart' : 'Cart item updated successfully',
     data: {
-      cartItemsCount: customer.cart.length
+      cartItemsCount: cart.totals.totalItems,
+      cartTotal: cart.totals.total
     }
   });
 });
 
-// Remove item from cart
-export const removeFromCart = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+/**
+ * @swagger
+ * /api/v1/cart/item/{itemId}:
+ *   delete:
+ *     summary: Remove item from cart
+ */
+export const removeCartItem = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');
   }
 
   const { itemId } = req.params;
 
-  const customer = await Customer.findById(req.customer._id);
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
+  // Find cart
+  const cart = await Cart.findOne({ customer: req.customer._id });
+  if (!cart) {
+    throw new NotFoundError('Cart not found');
   }
 
-  const itemIndex = customer.cart.findIndex((item: any) => item._id?.toString() === itemId);
-  if (itemIndex === -1) {
-    throw new NotFoundError('Cart item not found');
+  // Remove item
+  const initialLength = cart.items.length;
+  cart.items = cart.items.filter((item: any) => item._id.toString() !== itemId);
+
+  if (cart.items.length === initialLength) {
+    throw new NotFoundError('Item not found in cart');
   }
 
-  customer.cart.splice(itemIndex, 1);
-  await customer.save();
+  await cart.save();
 
-  res.status(200).json({
+  res.json({
     success: true,
     message: 'Item removed from cart successfully',
     data: {
-      cartItemsCount: customer.cart.length
+      cartItemsCount: cart.totals.totalItems,
+      cartTotal: cart.totals.total
     }
   });
 });
 
-// Clear entire cart
+/**
+ * @swagger
+ * /api/v1/cart/clear:
+ *   delete:
+ *     summary: Clear entire cart
+ */
 export const clearCart = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');
   }
 
-  const customer = await Customer.findById(req.customer._id);
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
+  // Find cart
+  const cart = await Cart.findOne({ customer: req.customer._id });
+  if (!cart) {
+    throw new NotFoundError('Cart not found');
   }
 
-  customer.cart = [];
-  await customer.save();
+  // Clear cart
+  cart.items = [];
+  await cart.save();
 
-  res.status(200).json({
+  res.json({
     success: true,
     message: 'Cart cleared successfully',
     data: {
-      cartItemsCount: 0
+      cartItemsCount: 0,
+      cartTotal: 0
     }
   });
 });
 
-// Get cart items count
-export const getCartItemsCount = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+/**
+ * @swagger
+ * /api/v1/cart/validate:
+ *   post:
+ *     summary: Validate cart before checkout
+ */
+export const validateCart = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');
   }
 
-  const customer = await Customer.findById(req.customer._id);
-  if (!customer) {
-    throw new NotFoundError('Customer not found');
+  // Find cart with product details
+  const cart = await Cart.findOne({ customer: req.customer._id }).populate({
+    path: 'items.product',
+    select: 'name price isActive inStock stock'
+  });
+
+  if (!cart || cart.items.length === 0) {
+    throw new ValidationError('Cart is empty');
   }
 
-  const totalItems = customer.cart.reduce((total: number, item: any) => total + item.quantity, 0);
+  const validationErrors: string[] = [];
+  const validItems = [];
 
-  res.status(200).json({
+  for (let i = 0; i < cart.items.length; i++) {
+    const item = cart.items[i] as any;
+    const product = item.product;
+
+    if (!product) {
+      validationErrors.push(`Product ${item.name} no longer exists`);
+      continue;
+    }
+
+    if (!product.isActive) {
+      validationErrors.push(`Product ${product.name} is no longer available`);
+      continue;
+    }
+
+    if (!product.inStock) {
+      validationErrors.push(`Product ${product.name} is out of stock`);
+      continue;
+    }
+
+    if (product.stock.available < item.quantity) {
+      validationErrors.push(`Product ${product.name}: Only ${product.stock.available} items available, but ${item.quantity} requested`);
+      continue;
+    }
+
+    // Check for price changes
+    if (Math.abs(item.price - product.price.selling) > 0.01) {
+      validationErrors.push(`Price changed for ${product.name}: was ₹${item.price}, now ₹${product.price.selling}`);
+      // Update cart with new price
+      item.price = product.price.selling;
+    }
+
+    validItems.push(item);
+  }
+
+  // Update cart with valid items and new prices
+  if (validItems.length !== cart.items.length) {
+    cart.items = validItems;
+    await cart.save();
+  }
+
+  const isValid = validationErrors.length === 0;
+
+  res.json({
     success: true,
     data: {
-      totalItems,
-      cartItemsCount: customer.cart.length
+      isValid,
+      errors: validationErrors,
+      cartSummary: {
+        totalItems: cart.totals.totalItems,
+        total: cart.totals.total,
+        subtotal: cart.totals.subtotal,
+        tax: cart.totals.tax,
+        shipping: cart.totals.shipping
+      }
+    }
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/cart/count:
+ *   get:
+ *     summary: Get cart items count
+ */
+export const getCartCount = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const cart = await Cart.findOne({ customer: req.customer._id });
+  
+  res.json({
+    success: true,
+    data: {
+      count: cart ? cart.totals.totalItems : 0
     }
   });
 });

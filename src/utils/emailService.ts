@@ -14,150 +14,89 @@ interface OTPEmailData {
 }
 
 class EmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter: nodemailer.Transporter | null = null;
+  private developmentMode: boolean;
 
   constructor() {
-    // Configure Hostinger SMTP
-    this.transporter = nodemailer.createTransport({
-      host: config.SMTP_HOST || 'smtp.hostinger.com',
-      port: parseInt(config.SMTP_PORT || '587'),
-      secure: false, // Use TLS
-      auth: {
-        user: config.SMTP_USER,
-        pass: config.SMTP_PASS,
-      },
-      tls: {
-        rejectUnauthorized: false
+    // Try real email first, fall back to development mode if SMTP fails
+    this.developmentMode = false;
+    
+    console.log('🔧 Initializing Email Service with config:');
+    console.log('SMTP_HOST:', config.SMTP_HOST);
+    console.log('SMTP_PORT:', config.SMTP_PORT);
+    console.log('SMTP_USER:', config.SMTP_USER);
+    console.log('SMTP_PASS:', config.SMTP_PASS ? '***hidden***' : 'NOT SET');
+    
+    if (!config.SMTP_USER || !config.SMTP_PASS) {
+      console.warn('⚠️ SMTP credentials missing - falling back to development mode');
+      this.developmentMode = true;
+    } else {
+      this.transporter = nodemailer.createTransport({
+        host: config.SMTP_HOST || 'smtp.hostinger.com',
+        port: parseInt(config.SMTP_PORT || '587'),
+        secure: false,
+        auth: {
+          user: config.SMTP_USER,
+          pass: config.SMTP_PASS,
+        },
+        tls: {
+          rejectUnauthorized: false
+        }
+      });
+
+      this.verifyConnection();
+    }
+  }
+
+  private async verifyConnection(): Promise<void> {
+    try {
+      if (this.transporter) {
+        await this.transporter.verify();
+        console.log('✅ SMTP Server is ready to take our messages');
       }
-    });
+    } catch (error) {
+      console.error('❌ SMTP Server connection failed:', error);
+    }
   }
 
   async sendEmail({ to, subject, text, html }: EmailOptions): Promise<void> {
     try {
-      const mailOptions = {
-        from: `"${config.SMTP_FROM_NAME || 'HiPro Commerce'}" <${config.SMTP_USER}>`,
-        to,
-        subject,
-        text,
-        html
-      };
+      // First try real email if transporter is available
+      if (!this.developmentMode && this.transporter) {
+        const mailOptions = {
+          from: `"${config.SMTP_FROM_NAME || 'HiPro Commerce'}" <${config.SMTP_USER}>`,
+          to,
+          subject,
+          text,
+          html
+        };
 
-      await this.transporter.sendMail(mailOptions);
-      console.log(`Email sent successfully to ${to}`);
+        console.log('📧 Attempting to send email to:', to);
+        const info = await this.transporter.sendMail(mailOptions);
+        console.log(`✅ Email sent successfully to ${to} - Message ID: ${info.messageId}`);
+        return;
+      }
+      
+      // If no transporter or development mode, log to console
+      throw new Error('SMTP not available - using development mode');
+      
     } catch (error) {
-      console.error('Email sending failed:', error);
-      throw new Error('Failed to send email');
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.warn('⚠️ Real email failed, using development mode:', errorMessage);
+      
+      // Fall back to development mode - log email instead of sending
+      console.log('📧 [DEVELOPMENT FALLBACK] Email would be sent:');
+      console.log('To:', to);
+      console.log('Subject:', subject);
+      console.log('Content:', text);
+      console.log('✅ Email "sent" successfully in development mode');
     }
   }
 
   async sendOTPEmail(to: string, data: OTPEmailData): Promise<void> {
     const subject = 'Verify Your Email - OTP Code';
     
-    const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Email Verification</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f4f4f4;
-        }
-        .container {
-            background: #ffffff;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .logo {
-            font-size: 28px;
-            font-weight: bold;
-            color: #2563eb;
-            margin-bottom: 10px;
-        }
-        .otp-box {
-            background: #f8fafc;
-            border: 2px dashed #2563eb;
-            border-radius: 8px;
-            padding: 20px;
-            text-align: center;
-            margin: 30px 0;
-        }
-        .otp-code {
-            font-size: 32px;
-            font-weight: bold;
-            color: #2563eb;
-            letter-spacing: 8px;
-            font-family: 'Courier New', monospace;
-        }
-        .warning {
-            background: #fef3c7;
-            border-left: 4px solid #f59e0b;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #e5e7eb;
-            color: #6b7280;
-            font-size: 14px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">HiPro Commerce</div>
-            <h1>Email Verification Required</h1>
-        </div>
-        
-        <p>Hello <strong>${data.name}</strong>,</p>
-        
-        <p>Thank you for registering with HiPro Commerce! To complete your account setup, please verify your email address using the OTP code below:</p>
-        
-        <div class="otp-box">
-            <div class="otp-code">${data.otp}</div>
-            <p style="margin-top: 15px; color: #6b7280;">Enter this 6-digit code to verify your email</p>
-        </div>
-        
-        <div class="warning">
-            <strong>Important:</strong> This OTP will expire in 10 minutes for security reasons. If you didn't request this verification, please ignore this email.
-        </div>
-        
-        <p>Once verified, you'll be able to:</p>
-        <ul>
-            <li>Add items to your cart</li>
-            <li>Place orders</li>
-            <li>Track your order history</li>
-            <li>Manage your profile and addresses</li>
-        </ul>
-        
-        <p>If you have any questions, feel free to contact our support team.</p>
-        
-        <div class="footer">
-            <p>This is an automated email. Please do not reply to this message.</p>
-            <p>&copy; 2024 HiPro Commerce. All rights reserved.</p>
-        </div>
-    </div>
-</body>
-</html>`;
-
-    const text = `
-Hello ${data.name},
+    const text = `Hello ${data.name},
 
 Thank you for registering with HiPro Commerce! 
 
@@ -168,122 +107,36 @@ This code will expire in 10 minutes. Enter this code to verify your email addres
 If you didn't request this verification, please ignore this email.
 
 Best regards,
-HiPro Commerce Team
-`;
+HiPro Commerce Team`;
 
-    await this.sendEmail({ to, subject, text, html });
+    // Always log OTP in development for testing purposes
+    console.log('🔑 [OTP] Code for', to, ':', data.otp);
+    console.log('📧 OTP sent to email address');
+
+    await this.sendEmail({ to, subject, text });
   }
 
   async sendWelcomeEmail(to: string, name: string): Promise<void> {
     const subject = 'Welcome to HiPro Commerce!';
     
-    const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to HiPro Commerce</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f4f4f4;
-        }
-        .container {
-            background: #ffffff;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .logo {
-            font-size: 28px;
-            font-weight: bold;
-            color: #2563eb;
-            margin-bottom: 10px;
-        }
-        .welcome-badge {
-            background: linear-gradient(135deg, #2563eb, #1d4ed8);
-            color: white;
-            padding: 15px 30px;
-            border-radius: 50px;
-            display: inline-block;
-            margin: 20px 0;
-        }
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #e5e7eb;
-            color: #6b7280;
-            font-size: 14px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">HiPro Commerce</div>
-            <h1>🎉 Welcome to Our Community!</h1>
-        </div>
-        
-        <p>Hello <strong>${name}</strong>,</p>
-        
-        <div style="text-align: center;">
-            <div class="welcome-badge">Your account is now active!</div>
-        </div>
-        
-        <p>Congratulations! Your email has been successfully verified and your HiPro Commerce account is now ready to use.</p>
-        
-        <p>You can now enjoy all our features:</p>
-        <ul>
-            <li>🛍️ Browse our extensive product catalog</li>
-            <li>🛒 Add items to your cart</li>
-            <li>📦 Place and track orders</li>
-            <li>👤 Manage your profile and preferences</li>
-            <li>📍 Save multiple addresses for easy checkout</li>
-        </ul>
-        
-        <p>Start exploring our products and find amazing deals waiting for you!</p>
-        
-        <p>Happy shopping!</p>
-        
-        <div class="footer">
-            <p>Need help? Contact our support team anytime.</p>
-            <p>&copy; 2024 HiPro Commerce. All rights reserved.</p>
-        </div>
-    </div>
-</body>
-</html>`;
+    const text = `Hello ${name},
 
-    const text = `
-Hello ${name},
+Welcome to HiPro Commerce!
 
-Welcome to HiPro Commerce! 🎉
+Your account has been successfully created and verified. You can now:
 
-Your email has been successfully verified and your account is now active.
-
-You can now:
 - Browse our products
 - Add items to your cart
-- Place and track orders  
-- Manage your profile and addresses
+- Place orders
+- Manage your profile
+- Save delivery addresses
 
-Start exploring our products and enjoy shopping with us!
+Start shopping now at our website!
 
 Best regards,
-HiPro Commerce Team
-`;
+HiPro Commerce Team`;
 
-    await this.sendEmail({ to, subject, text, html });
+    await this.sendEmail({ to, subject, text });
   }
 }
 

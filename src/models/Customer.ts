@@ -22,14 +22,6 @@ export interface ICustomer extends Document {
     country: string;
     isDefault: boolean;
   }[];
-  cart: {
-    _id?: Types.ObjectId;
-    product: Types.ObjectId;
-    quantity: number;
-    selectedSize?: string;
-    selectedColor?: string;
-    addedAt: Date;
-  }[];
   createdAt: Date;
   updatedAt: Date;
   comparePassword(password: string): Promise<boolean>;
@@ -112,31 +104,6 @@ const CustomerSchema = new Schema<ICustomer>({
     isDefault: {
       type: Boolean,
       default: false
-    }
-  }],
-  cart: [{
-    product: {
-      type: Schema.Types.ObjectId,
-      ref: 'Product',
-      required: true
-    },
-    quantity: {
-      type: Number,
-      required: true,
-      min: 1,
-      default: 1
-    },
-    selectedSize: {
-      type: String,
-      trim: true
-    },
-    selectedColor: {
-      type: String,
-      trim: true
-    },
-    addedAt: {
-      type: Date,
-      default: Date.now
     }
   }]
 }, {

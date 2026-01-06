@@ -1,271 +1,508 @@
 import { Response } from 'express';
-import { Payment } from '../models/Payment.js';
-import { Order } from '../models/Order.js';
-import { CustomerAuthenticatedRequest } from '../middleware/customerAuthMiddleware.js';
-import { AppError } from '../middleware/errorMiddleware.js';
+import mongoose from 'mongoose';
+import { z } from 'zod';
+import { Payment, Order } from '../models';
+import { 
+  asyncHandler, 
+  ValidationError, 
+  NotFoundError,
+  AppError 
+} from '../middleware/errorMiddleware';
+import { CustomerAuthenticatedRequest } from '../middleware/customerAuthMiddleware';
 
-// Simulate payment processing
-export const processPayment = async (req: CustomerAuthenticatedRequest, res: Response) => {
+// Validation schemas
+const initiatePaymentSchema = z.object({
+  orderId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid order ID'),
+  paymentMethod: z.enum(['CARD', 'UPI', 'NET_BANKING', 'WALLET'], {
+    required_error: 'Payment method is required'
+  })
+});
+
+const verifyPaymentSchema = z.object({
+  paymentId: z.string(),
+  orderId: z.string(),
+  signature: z.string().optional(),
+  gatewayPaymentId: z.string().optional(),
+  gatewayOrderId: z.string().optional()
+});
+
+const processRefundSchema = z.object({
+  paymentId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid payment ID'),
+  amount: z.number().min(0.01, 'Refund amount must be greater than 0'),
+  reason: z.string().min(5, 'Refund reason must be at least 5 characters').max(500, 'Reason too long')
+});
+
+/**
+ * @swagger
+ * /api/v1/payments/initiate:
+ *   post:
+ *     summary: Initiate payment for an order
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - orderId
+ *               - paymentMethod
+ */
+export const initiatePayment = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const validatedData = initiatePaymentSchema.parse(req.body);
+  const { orderId, paymentMethod } = validatedData;
+
+  // Find the order
+  const order = await Order.findOne({ _id: orderId, user: req.customer._id });
+  if (!order) {
+    throw new NotFoundError('Order not found');
+  }
+
+  if (order.status !== 'PENDING') {
+    throw new ValidationError('Payment can only be initiated for pending orders');
+  }
+
+  if (order.paymentStatus !== 'PENDING') {
+    throw new ValidationError('Payment already processed or in progress');
+  }
+
+  // Find existing payment record
+  let payment = await Payment.findById(order.paymentId);
+  if (!payment) {
+    throw new NotFoundError('Payment record not found');
+  }
+
+  // Update payment method if different
+  if (payment.method !== paymentMethod) {
+    payment.method = paymentMethod;
+  }
+
+  // Simulate payment gateway integration
+  const gatewayOrderId = `gw_order_${Date.now()}`;
+  
+  // Update payment with gateway details
+  payment.status = 'INITIATED';
+  payment.gateway.gatewayOrderId = gatewayOrderId;
+  payment.gateway.transactionId = `txn_${Date.now()}`;
+  
+  await payment.save();
+
+  // In real implementation, you would integrate with actual payment gateway
+  // For simulation, we'll return mock gateway response
+  const mockGatewayResponse = {
+    gateway_order_id: gatewayOrderId,
+    key: 'rzp_test_mock_key',
+    amount: payment.amount * 100, // Amount in paise for Razorpay
+    currency: payment.currency,
+    order_id: order.orderNumber,
+    name: 'HiPro Commerce',
+    description: `Payment for order ${order.orderNumber}`,
+    prefill: {
+      name: req.customer.name,
+      email: req.customer.email,
+      contact: req.customer.phone || ''
+    },
+    theme: {
+      color: '#3399cc'
+    }
+  };
+
+  res.json({
+    success: true,
+    message: 'Payment initiated successfully',
+    data: {
+      paymentId: payment._id,
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      amount: payment.amount,
+      currency: payment.currency,
+      status: payment.status,
+      gateway: mockGatewayResponse
+    }
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/payments/verify:
+ *   post:
+ *     summary: Verify payment after gateway response
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const verifyPayment = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const validatedData = verifyPaymentSchema.parse(req.body);
+  const { paymentId, orderId, signature, gatewayPaymentId } = validatedData;
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const { paymentId, orderId, method } = req.body;
+    // Find payment and order
+    const payment = await Payment.findOne({ 
+      _id: paymentId, 
+      customer: req.customer._id 
+    }).session(session);
+    
+    const order = await Order.findOne({ 
+      _id: orderId, 
+      user: req.customer._id 
+    }).session(session);
 
-    if (!paymentId || !orderId) {
-      throw new AppError('Payment ID and Order ID are required', 400);
+    if (!payment || !order) {
+      throw new NotFoundError('Payment or order not found');
     }
 
-    // Find payment
-    const payment = await Payment.findOne({
-      paymentId,
-      customer: req.customer?._id
+    if (payment.status !== 'INITIATED') {
+      throw new ValidationError('Invalid payment status for verification');
+    }
+
+    // In real implementation, verify signature with payment gateway
+    // For simulation, we'll assume verification is successful
+    const isSignatureValid = true; // Mock verification
+
+    if (!isSignatureValid) {
+      // Update payment as failed
+      payment.status = 'FAILED';
+      await payment.save({ session });
+      
+      await session.commitTransaction();
+      
+      res.status(400).json({
+        success: false,
+        message: 'Payment verification failed',
+        data: {
+          paymentId: payment._id,
+          status: 'FAILED'
+        }
+      });
+      return;
+    }
+
+    // Payment successful - update records
+    payment.status = 'SUCCESS';
+    payment.gateway.gatewayPaymentId = gatewayPaymentId;
+    payment.gateway.signature = signature;
+    await payment.save({ session });
+
+    // Update order status
+    order.status = 'PAID';
+    order.paymentStatus = 'PAID';
+    order.statusHistory.push({
+      status: 'PAID',
+      timestamp: new Date(),
+      note: 'Payment verified successfully'
+    });
+    
+    // Confirm sale for all order items (convert reserved stock to sold)
+    const success = await order.confirmSale();
+    if (!success) {
+      throw new AppError('Failed to confirm stock sale', 500);
+    }
+
+    await order.save({ session });
+
+    await session.commitTransaction();
+
+    res.json({
+      success: true,
+      message: 'Payment verified successfully',
+      data: {
+        paymentId: payment._id,
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        amount: payment.amount,
+        status: payment.status,
+        orderStatus: order.status,
+        paidAt: payment.updatedAt
+      }
     });
 
-    if (!payment) {
-      throw new AppError('Payment not found', 404);
-    }
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
+});
 
-    // Find associated order
-    const order = await Order.findById(orderId);
-    if (!order) {
-      throw new AppError('Order not found', 404);
-    }
+/**
+ * @swagger
+ * /api/v1/payments/history:
+ *   get:
+ *     summary: Get customer's payment history
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getPaymentHistory = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
 
-    // Simulate payment processing based on method
-    let paymentSuccess = false;
-    
-    if (method === 'COD') {
-      // COD is always successful at order placement
-      paymentSuccess = true;
-      payment.status = 'PENDING'; // Will be marked as SUCCESS on delivery
-    } else {
-      // Simulate online payment (90% success rate)
-      paymentSuccess = Math.random() > 0.1;
-      
-      if (paymentSuccess) {
-        payment.status = 'SUCCESS';
-        payment.gateway.transactionId = `txn_${Date.now()}`;
-        payment.gateway.gatewayPaymentId = `pay_${Date.now()}`;
-        payment.gateway.signature = 'simulated_signature_' + Math.random().toString(36);
-      } else {
-        payment.status = 'FAILED';
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const status = req.query.status as string;
+
+  const filter: any = { customer: req.customer._id };
+  if (status) {
+    filter.status = status;
+  }
+
+  const payments = await Payment.find(filter)
+    .populate({
+      path: 'order',
+      select: 'orderNumber totals items createdAt'
+    })
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit);
+
+  const total = await Payment.countDocuments(filter);
+
+  const formattedPayments = payments.map(payment => ({
+    _id: payment._id,
+    paymentId: payment.paymentId,
+    amount: payment.amount,
+    currency: payment.currency,
+    method: payment.method,
+    status: payment.status,
+    createdAt: payment.createdAt,
+    order: payment.order ? {
+      _id: (payment.order as any)._id,
+      orderNumber: (payment.order as any).orderNumber,
+      total: (payment.order as any).totals?.total,
+      itemsCount: (payment.order as any).items?.length || 0,
+      orderDate: (payment.order as any).createdAt
+    } : null,
+    refund: payment.refund ? {
+      amount: payment.refund.amount,
+      reason: payment.refund.reason,
+      processedAt: payment.refund.processedAt,
+      refundId: payment.refund.refundId
+    } : null
+  }));
+
+  res.json({
+    success: true,
+    data: {
+      payments: formattedPayments,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
       }
     }
+  });
+});
 
-    await payment.save();
+/**
+ * @swagger
+ * /api/v1/payments/{paymentId}:
+ *   get:
+ *     summary: Get payment details
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getPaymentById = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
 
-    // Update order status based on payment result
-    if (paymentSuccess) {
-      order.paymentStatus = method === 'COD' ? 'PENDING' : 'PAID';
-      order.status = method === 'COD' ? 'PENDING' : 'PAID';
-      
-      // Add to status history
-      order.statusHistory.push({
-        status: order.status,
-        timestamp: new Date(),
-        note: method === 'COD' ? 'Order placed with COD' : 'Payment successful'
-      });
-    } else {
-      order.paymentStatus = 'FAILED';
-      order.status = 'CANCELLED'; // Auto-cancel failed payments
-      
-      order.statusHistory.push({
-        status: 'CANCELLED',
-        timestamp: new Date(),
-        note: 'Payment failed - Order cancelled'
-      });
+  const { paymentId } = req.params;
+
+  const payment = await Payment.findOne({ 
+    _id: paymentId, 
+    customer: req.customer._id 
+  }).populate({
+    path: 'order',
+    select: 'orderNumber totals items shippingAddress status'
+  });
+
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
+  }
+
+  res.json({
+    success: true,
+    data: {
+      _id: payment._id,
+      paymentId: payment.paymentId,
+      amount: payment.amount,
+      currency: payment.currency,
+      method: payment.method,
+      status: payment.status,
+      gateway: {
+        provider: payment.gateway.provider,
+        transactionId: payment.gateway.transactionId,
+        gatewayOrderId: payment.gateway.gatewayOrderId
+      },
+      metadata: payment.metadata,
+      refund: payment.refund,
+      createdAt: payment.createdAt,
+      updatedAt: payment.updatedAt,
+      order: payment.order
     }
+  });
+});
 
+/**
+ * @swagger
+ * /api/v1/payments/refund:
+ *   post:
+ *     summary: Process refund (typically called internally)
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const processRefund = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const validatedData = processRefundSchema.parse(req.body);
+  const { paymentId, amount, reason } = validatedData;
+
+  const payment = await Payment.findOne({ 
+    _id: paymentId, 
+    customer: req.customer._id 
+  });
+
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
+  }
+
+  if (!payment.canBeRefunded()) {
+    throw new ValidationError('Payment cannot be refunded');
+  }
+
+  if (amount > payment.amount) {
+    throw new ValidationError('Refund amount cannot exceed payment amount');
+  }
+
+  const refunded = await payment.processRefund(amount, reason);
+  
+  if (!refunded) {
+    throw new AppError('Failed to process refund', 500);
+  }
+
+  res.json({
+    success: true,
+    message: 'Refund processed successfully',
+    data: {
+      paymentId: payment._id,
+      originalAmount: payment.amount,
+      refundAmount: amount,
+      refundId: payment.refund?.refundId,
+      status: payment.status,
+      processedAt: payment.refund?.processedAt
+    }
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/payments/simulate/success:
+ *   post:
+ *     summary: Simulate successful payment (for testing)
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const simulatePaymentSuccess = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const { paymentId, orderId } = req.body;
+
+  const payment = await Payment.findOne({ 
+    _id: paymentId, 
+    customer: req.customer._id 
+  });
+
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
+  }
+
+  // Simulate successful payment
+  payment.status = 'SUCCESS';
+  payment.gateway.gatewayPaymentId = `pay_${Date.now()}`;
+  payment.gateway.signature = `mock_signature_${Date.now()}`;
+  await payment.save();
+
+  // Update order
+  const order = await Order.findById(orderId);
+  if (order) {
+    order.status = 'PAID';
+    order.paymentStatus = 'PAID';
+    order.statusHistory.push({
+      status: 'PAID',
+      timestamp: new Date(),
+      note: 'Payment simulated as successful'
+    });
     await order.save();
-
-    res.status(200).json({
-      success: paymentSuccess,
-      message: paymentSuccess ? 'Payment processed successfully' : 'Payment failed',
-      data: {
-        payment: {
-          paymentId: payment.paymentId,
-          status: payment.status,
-          amount: payment.amount,
-          method: payment.method
-        },
-        order: {
-          orderNumber: order.orderNumber,
-          status: order.status,
-          paymentStatus: order.paymentStatus
-        }
-      }
-    });
-
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to process payment', error.statusCode || 500);
   }
-};
 
-// Get payment history
-export const getPaymentHistory = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
-    const skip = (page - 1) * limit;
+  res.json({
+    success: true,
+    message: 'Payment simulated as successful',
+    data: {
+      paymentId: payment._id,
+      status: payment.status,
+      orderId,
+      orderStatus: order?.status
+    }
+  });
+});
 
-    const payments = await Payment.find({ customer: req.customer?._id })
-      .populate('order', 'orderNumber status items.name')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const totalPayments = await Payment.countDocuments({ customer: req.customer?._id });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        payments,
-        pagination: {
-          currentPage: page,
-          totalPages: Math.ceil(totalPayments / limit),
-          totalPayments,
-          hasNext: page < Math.ceil(totalPayments / limit),
-          hasPrev: page > 1
-        }
-      }
-    });
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to fetch payment history', error.statusCode || 500);
+/**
+ * @swagger
+ * /api/v1/payments/simulate/failure:
+ *   post:
+ *     summary: Simulate failed payment (for testing)
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const simulatePaymentFailure = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
   }
-};
 
-// Get payment by ID
-export const getPaymentById = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  try {
-    const { paymentId } = req.params;
+  const { paymentId } = req.body;
 
-    const payment = await Payment.findOne({
-      _id: paymentId,
-      customer: req.customer?._id
-    }).populate('order', 'orderNumber status totals items');
+  const payment = await Payment.findOne({ 
+    _id: paymentId, 
+    customer: req.customer._id 
+  });
 
-    if (!payment) {
-      throw new AppError('Payment not found', 404);
-    }
-
-    res.status(200).json({
-      success: true,
-      data: payment
-    });
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to fetch payment', error.statusCode || 500);
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
   }
-};
 
-// Request refund
-export const requestRefund = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  try {
-    const { paymentId } = req.params;
-    const { reason, amount } = req.body;
+  payment.status = 'FAILED';
+  await payment.save();
 
-    if (!reason) {
-      throw new AppError('Refund reason is required', 400);
+  res.json({
+    success: true,
+    message: 'Payment marked as failed',
+    data: {
+      paymentId: payment._id,
+      status: payment.status
     }
-
-    const payment = await Payment.findOne({
-      _id: paymentId,
-      customer: req.customer?._id
-    }).populate('order');
-
-    if (!payment) {
-      throw new AppError('Payment not found', 404);
-    }
-
-    if (!payment.canBeRefunded()) {
-      throw new AppError('Payment cannot be refunded', 400);
-    }
-
-    const refundAmount = amount || payment.amount;
-    
-    if (refundAmount > payment.amount) {
-      throw new AppError('Refund amount cannot exceed payment amount', 400);
-    }
-
-    // Process refund
-    const refundProcessed = await payment.processRefund(refundAmount, reason);
-    
-    if (!refundProcessed) {
-      throw new AppError('Failed to process refund', 500);
-    }
-
-    // Update associated order
-    const order = payment.order as any;
-    if (order) {
-      order.paymentStatus = 'REFUNDED';
-      if (order.status !== 'CANCELLED') {
-        order.status = 'CANCELLED';
-        order.statusHistory.push({
-          status: 'CANCELLED',
-          timestamp: new Date(),
-          note: `Order cancelled - Refund processed: ${reason}`
-        });
-      }
-      await order.save();
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Refund processed successfully',
-      data: {
-        payment: {
-          paymentId: payment.paymentId,
-          status: payment.status,
-          refund: payment.refund
-        }
-      }
-    });
-
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to process refund', error.statusCode || 500);
-  }
-};
-
-// Get payment statistics
-export const getPaymentStats = async (req: CustomerAuthenticatedRequest, res: Response) => {
-  try {
-    const customerId = req.customer?._id;
-
-    const stats = await Payment.aggregate([
-      { $match: { customer: customerId } },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$amount' }
-        }
-      }
-    ]);
-
-    const totalPayments = await Payment.countDocuments({ customer: customerId });
-    const totalSpent = await Payment.aggregate([
-      { $match: { customer: customerId, status: 'SUCCESS' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-
-    const totalRefunded = await Payment.aggregate([
-      { $match: { customer: customerId, status: 'REFUNDED' } },
-      { $group: { _id: null, total: { $sum: '$refund.amount' } } }
-    ]);
-
-    res.status(200).json({
-      success: true,
-      data: {
-        totalPayments,
-        totalSpent: totalSpent[0]?.total || 0,
-        totalRefunded: totalRefunded[0]?.total || 0,
-        statusBreakdown: stats.reduce((acc, stat) => {
-          acc[stat._id] = {
-            count: stat.count,
-            totalAmount: stat.totalAmount
-          };
-          return acc;
-        }, {})
-      }
-    });
-  } catch (error: any) {
-    throw new AppError(error.message || 'Failed to fetch payment statistics', error.statusCode || 500);
-  }
-};
+  });
+});
