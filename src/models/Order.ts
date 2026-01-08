@@ -376,9 +376,6 @@ OrderSchema.methods.cancelOrder = async function(reason: string, userId?: string
     throw new Error('Order cannot be cancelled in current status');
   }
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     // Update order status
     this.status = 'CANCELLED';
@@ -402,14 +399,10 @@ OrderSchema.methods.cancelOrder = async function(reason: string, userId?: string
       await this.processRefund();
     }
 
-    await this.save({ session });
-    await session.commitTransaction();
+    await this.save();
     return true;
   } catch (error) {
-    await session.abortTransaction();
     throw error;
-  } finally {
-    session.endSession();
   }
 };
 
