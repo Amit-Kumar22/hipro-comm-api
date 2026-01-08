@@ -1,5 +1,6 @@
 import express from 'express';
 import {
+  sendOTP,
   registerCustomer,
   loginCustomer,
   verifyOTP,
@@ -13,6 +14,7 @@ import { authenticateCustomer } from '../middleware/customerAuthMiddleware';
 const router = express.Router();
 
 // Public routes (no authentication required)
+router.post('/send-otp', sendOTP);
 router.post('/register', registerCustomer);
 router.post('/login', loginCustomer);
 router.post('/verify-otp', verifyOTP);

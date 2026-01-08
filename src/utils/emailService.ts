@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer';
-import { config } from '../config/env';
 
 interface EmailOptions {
   to: string;
@@ -14,82 +13,114 @@ interface OTPEmailData {
 }
 
 class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
-  private developmentMode: boolean;
+  private transporter: nodemailer.Transporter;
 
   constructor() {
-    // Try real email first, fall back to development mode if SMTP fails
-    this.developmentMode = false;
+    console.log('🔧 Initializing Hostinger Email Service (info@hiprotech.org)');
+    console.log('Email Service:', process.env.EMAIL_SERVICE);
+    console.log('Email User:', process.env.EMAIL_USER);
+    console.log('Email From:', process.env.EMAIL_FROM);
+    console.log('SMTP Host:', process.env.SMTP_HOST);
+    console.log('SMTP Port:', process.env.SMTP_PORT);
+    console.log('SMTP Secure:', process.env.SMTP_SECURE);
     
-    console.log('🔧 Initializing Email Service with config:');
-    console.log('SMTP_HOST:', config.SMTP_HOST);
-    console.log('SMTP_PORT:', config.SMTP_PORT);
-    console.log('SMTP_USER:', config.SMTP_USER);
-    console.log('SMTP_PASS:', config.SMTP_PASS ? '***hidden***' : 'NOT SET');
-    
-    if (!config.SMTP_USER || !config.SMTP_PASS) {
-      console.warn('⚠️ SMTP credentials missing - falling back to development mode');
-      this.developmentMode = true;
-    } else {
-      this.transporter = nodemailer.createTransport({
-        host: config.SMTP_HOST || 'smtp.hostinger.com',
-        port: parseInt(config.SMTP_PORT || '587'),
-        secure: false,
-        auth: {
-          user: config.SMTP_USER,
-          pass: config.SMTP_PASS,
-        },
-        tls: {
-          rejectUnauthorized: false
-        }
-      });
+    // Hostinger SMTP configuration for info@hiprotech.org
+    this.transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_SECURE === 'true', // false for 587
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      tls: {
+        rejectUnauthorized: false
+      }
+    });
 
-      this.verifyConnection();
-    }
+    this.verifyConnection();
   }
 
   private async verifyConnection(): Promise<void> {
     try {
-      if (this.transporter) {
-        await this.transporter.verify();
-        console.log('✅ SMTP Server is ready to take our messages');
-      }
-    } catch (error) {
-      console.error('❌ SMTP Server connection failed:', error);
+      console.log('🔄 Testing Hostinger SMTP connection with user configuration...');
+      await this.transporter.verify();
+      console.log('✅ Hostinger SMTP connection successful - info@hiprotech.org ready for OTP emails');
+    } catch (error: any) {
+      console.error('❌ Hostinger SMTP connection failed:', error.message);
+      console.error('⚠️ Please verify your Hostinger email credentials are correct');
     }
   }
 
   async sendEmail({ to, subject, text, html }: EmailOptions): Promise<void> {
     try {
-      // First try real email if transporter is available
-      if (!this.developmentMode && this.transporter) {
-        const mailOptions = {
-          from: `"${config.SMTP_FROM_NAME || 'HiPro Commerce'}" <${config.SMTP_USER}>`,
-          to,
-          subject,
-          text,
-          html
-        };
+      const mailOptions = {
+        from: `"${process.env.SMTP_FROM_NAME || 'HiPro Commerce'}" <${process.env.EMAIL_FROM}>`,
+        to,
+        subject,
+        text,
+        html
+      };
 
-        console.log('📧 Attempting to send email to:', to);
-        const info = await this.transporter.sendMail(mailOptions);
-        console.log(`✅ Email sent successfully to ${to} - Message ID: ${info.messageId}`);
-        return;
+      console.log('📧 Sending email via Hostinger SMTP...');
+      console.log('  To:', to);
+      console.log('  From:', mailOptions.from);
+      console.log('  Subject:', subject);
+      console.log('  SMTP Host:', process.env.SMTP_HOST);
+      console.log('  SMTP Port:', process.env.SMTP_PORT);
+      console.log('  SMTP User:', process.env.EMAIL_USER);
+      
+      const info = await this.transporter.sendMail(mailOptions);
+      
+      console.log('✅ Email sent successfully!');
+      console.log('  Message ID:', info.messageId);
+      console.log('  Response:', info.response);
+      console.log('  Accepted recipients:', info.accepted);
+      console.log('  Rejected recipients:', info.rejected);
+      
+    } catch (error: any) {
+      console.error('❌ Failed to send email:', error);
+      console.error('Error details:', {
+        code: error.code,
+        errno: error.errno,
+        command: error.command,
+        response: error.response,
+        responseCode: error.responseCode,
+        stack: error.stack
+      });
+      
+      // Provide specific error messages based on common SMTP errors
+      if (error.response && typeof error.response === 'string') {
+        if (error.response.includes('554 5.7.1') && error.response.includes('Disabled by user from hPanel')) {
+          throw new Error('SMTP is disabled in Hostinger hPanel. Please enable email sending in your Hostinger control panel.');
+        } else if (error.response.includes('535 Authentication failed')) {
+          throw new Error('Email authentication failed. Please check your email credentials in the .env file.');
+        } else if (error.response.includes('550 Mailbox unavailable')) {
+          throw new Error('Sender email address is not valid or available.');
+        } else if (error.response.includes('553 sorry, that domain isn\'t in my list of allowed rcpthosts')) {
+          throw new Error('Domain not allowed for sending emails.');
+        }
       }
       
-      // If no transporter or development mode, log to console
-      throw new Error('SMTP not available - using development mode');
+      // Handle common nodemailer error codes
+      if (error.code) {
+        switch (error.code) {
+          case 'EAUTH':
+            throw new Error('Hostinger email authentication failed. Please verify your email credentials.');
+          case 'ECONNECTION':
+            throw new Error('Cannot connect to Hostinger SMTP server. Please check your network connection.');
+          case 'ETIMEDOUT':
+            throw new Error('Connection to Hostinger SMTP server timed out.');
+          case 'EENVELOPE':
+            throw new Error('Invalid email envelope. Please check sender and recipient addresses.');
+          case 'EMESSAGE':
+            throw new Error('Invalid email message content.');
+          default:
+            throw new Error(`SMTP Error [${error.code}]: ${error.message}`);
+        }
+      }
       
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.warn('⚠️ Real email failed, using development mode:', errorMessage);
-      
-      // Fall back to development mode - log email instead of sending
-      console.log('📧 [DEVELOPMENT FALLBACK] Email would be sent:');
-      console.log('To:', to);
-      console.log('Subject:', subject);
-      console.log('Content:', text);
-      console.log('✅ Email "sent" successfully in development mode');
+      throw new Error(`Failed to send email: ${error.message}`);
     }
   }
 
@@ -109,11 +140,35 @@ If you didn't request this verification, please ignore this email.
 Best regards,
 HiPro Commerce Team`;
 
-    // Always log OTP in development for testing purposes
-    console.log('🔑 [OTP] Code for', to, ':', data.otp);
-    console.log('📧 OTP sent to email address');
+    const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <h2 style="color: #f97316;">Verify Your Email</h2>
+      <p>Hello <strong>${data.name}</strong>,</p>
+      <p>Thank you for registering with HiPro Commerce!</p>
+      
+      <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+        <h3 style="color: #374151; margin: 0;">Your verification code is:</h3>
+        <div style="font-size: 32px; font-weight: bold; color: #f97316; letter-spacing: 8px; margin: 15px 0;">${data.otp}</div>
+        <p style="color: #6b7280; margin: 0; font-size: 14px;">This code will expire in 10 minutes</p>
+      </div>
+      
+      <p>Enter this code to verify your email address and complete your registration.</p>
+      <p style="color: #6b7280; font-size: 14px;">If you didn't request this verification, please ignore this email.</p>
+      
+      <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;">
+      <p style="color: #6b7280; font-size: 12px;">Best regards,<br>HiPro Commerce Team</p>
+    </div>`;
 
-    await this.sendEmail({ to, subject, text });
+    console.log('🔑 [OTP] Generating verification email for:', to);
+    console.log('🔑 [OTP] Code:', data.otp);
+
+    try {
+      await this.sendEmail({ to, subject, text, html });
+      console.log('✅ [SUCCESS] OTP email delivered to', to);
+    } catch (error: any) {
+      console.error('❌ [FAILURE] OTP email failed for', to, ':', error.message);
+      throw error; // Re-throw to let controller handle it
+    }
   }
 
   async sendWelcomeEmail(to: string, name: string): Promise<void> {

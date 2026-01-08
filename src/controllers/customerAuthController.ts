@@ -13,11 +13,23 @@ import {
 } from '../middleware/errorMiddleware';
 
 // Validation schemas
+const sendOTPSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+  email: z.string().email('Invalid email format'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  phone: z.string().optional().refine((val) => !val || val === '' || /^\d{10}$/.test(val), {
+    message: 'Phone number must be exactly 10 digits'
+  })
+});
+
 const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   email: z.string().email('Invalid email format'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  phone: z.string().regex(/^\d{10}$/, 'Invalid phone number').optional()
+  phone: z.string().optional().refine((val) => !val || val === '' || /^\d{10}$/.test(val), {
+    message: 'Phone number must be exactly 10 digits'
+  }),
+  otp: z.string().length(6, 'OTP must be 6 digits').regex(/^\d{6}$/, 'OTP must contain only digits')
 });
 
 const loginSchema = z.object({
@@ -49,9 +61,9 @@ const generateCustomerToken = (payload: CustomerJWTPayload): string => {
 
 /**
  * @swagger
- * /api/v1/customers/register:
+ * /api/v1/customers/send-otp:
  *   post:
- *     summary: Register a new customer
+ *     summary: Send OTP for customer registration
  *     tags: [Customer Auth]
  *     requestBody:
  *       required: true
@@ -82,8 +94,8 @@ const generateCustomerToken = (payload: CustomerJWTPayload): string => {
  *                 pattern: ^\d{10}$
  *                 example: "9876543210"
  *     responses:
- *       201:
- *         description: Customer registered successfully, OTP sent for verification
+ *       200:
+ *         description: OTP sent successfully
  *         content:
  *           application/json:
  *             schema:
@@ -94,12 +106,19 @@ const generateCustomerToken = (payload: CustomerJWTPayload): string => {
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: "Registration successful. Please verify your email with the OTP sent."
+ *                   example: "Please check your email for verification code."
  *                 data:
  *                   type: object
  *                   properties:
- *                     customer:
- *                       $ref: '#/components/schemas/Customer'
+ *                     email:
+ *                       type: string
+ *                       example: "john.customer@example.com"
+ *                     name:
+ *                       type: string
+ *                       example: "John Customer"
+ *                     otpExpiresAt:
+ *                       type: string
+ *                       format: date-time
  *       400:
  *         description: Validation error or customer already exists
  *         content:
@@ -107,38 +126,9 @@ const generateCustomerToken = (payload: CustomerJWTPayload): string => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-// Temporary storage for pending registrations (in production, use Redis)
-const pendingRegistrations = new Map<string, {
-  userData: any;
-  otp: string;
-  expiresAt: Date;
-}>();
-
-// Helper function to generate OTP
-const generateOTP = () => {
-  // In development, use fixed OTP for easier testing
-  const otp = process.env.NODE_ENV === 'development' ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date();
-  expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiry
-  return { otp, expiresAt };
-};
-
-// Helper function to validate OTP
-const isOTPValid = (storedOTP: string, storedExpiry: Date, providedOTP: string): boolean => {
-  return storedOTP === providedOTP && new Date() <= storedExpiry;
-};
-
-const getCookieOptions = () => ({
-  httpOnly: true,
-  secure: config.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
-  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
-  path: '/'
-});
-
-// Register customer
-export const registerCustomer = asyncHandler(async (req: Request, res: Response) => {
-  const validatedData = registerSchema.parse(req.body);
+// Send OTP for registration (new approach)
+export const sendOTP = asyncHandler(async (req: Request, res: Response) => {
+  const validatedData = sendOTPSchema.parse(req.body);
 
   // Check if customer already exists
   const existingCustomer = await Customer.findOne({ email: validatedData.email });
@@ -168,22 +158,42 @@ export const registerCustomer = asyncHandler(async (req: Request, res: Response)
     expiresAt
   });
 
-  // Send OTP email
+  // Send OTP email - Real email delivery required
   try {
+    console.log(`📧 Sending OTP email to: ${validatedData.email}`);
+    
     await emailService.sendOTPEmail(validatedData.email, {
       name: validatedData.name,
       otp
     });
+    
+    console.log(`✅ OTP email sent successfully to ${validatedData.email}`);
   } catch (error) {
-    // If email fails, remove pending registration
+    // If email fails, remove pending registration and return error
     pendingRegistrations.delete(validatedData.email);
-    console.error('Email sending failed:', error);
-    throw new BadRequestError('Failed to send verification email. Please try again.');
+    console.error('❌ Email sending failed:', error);
+    console.error('Error details:', {
+      type: typeof error,
+      message: error instanceof Error ? error.message : String(error),
+      code: error instanceof Error ? (error as any).code : undefined,
+      response: error instanceof Error ? (error as any).response : undefined
+    });
+    
+    // Always fail if email cannot be sent - no development mode bypass
+    if (error instanceof Error && (error.message.includes('SMTP is disabled') || error.message.includes('Disabled by user from hPanel'))) {
+      throw new BadRequestError('SMTP email service is disabled in Hostinger control panel. Please enable SMTP in your Hostinger hPanel to send verification emails.');
+    } else if (error instanceof Error && error.message.includes('authentication failed')) {
+      throw new BadRequestError('Email service authentication failed. Please contact support.');
+    } else if (error instanceof Error && (error as any).code === 'ECONNREFUSED') {
+      throw new BadRequestError('Unable to connect to email server. Please try again later or contact support.');
+    } else {
+      throw new BadRequestError('Failed to send verification email. Please check your email address and try again.');
+    }
   }
 
   res.status(200).json({
     success: true,
-    message: 'Please check your email for verification code to complete registration.',
+    message: 'Please check your email for verification code.',
     data: {
       email: validatedData.email,
       name: validatedData.name,
@@ -192,7 +202,173 @@ export const registerCustomer = asyncHandler(async (req: Request, res: Response)
   });
 });
 
-// Verify OTP
+/**
+ * @swagger
+ * /api/v1/customers/register:
+ *   post:
+ *     summary: Complete customer registration with OTP verification
+ *     tags: [Customer Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *               - otp
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 100
+ *                 example: "John Customer"
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john.customer@example.com"
+ *               password:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "password123"
+ *               phone:
+ *                 type: string
+ *                 pattern: ^\d{10}$
+ *                 example: "9876543210"
+ *               otp:
+ *                 type: string
+ *                 minLength: 6
+ *                 maxLength: 6
+ *                 example: "123456"
+ *     responses:
+ *       201:
+ *         description: Customer registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Account created successfully! You are now logged in."
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     customer:
+ *                       $ref: '#/components/schemas/Customer'
+ *                     token:
+ *                       type: string
+ *       400:
+ *         description: Validation error or invalid OTP
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+// Register customer (updated to require OTP)
+export const registerCustomer = asyncHandler(async (req: Request, res: Response) => {
+  const { name, email, password, phone, otp } = registerSchema.parse(req.body);
+
+  // Check for pending registration
+  const pendingRegistration = pendingRegistrations.get(email);
+  if (!pendingRegistration) {
+    throw new NotFoundError('No pending registration found. Please request OTP first.');
+  }
+
+  // Validate OTP
+  if (!isOTPValid(pendingRegistration.otp, pendingRegistration.expiresAt, otp)) {
+    throw new ValidationError('Invalid or expired OTP');
+  }
+
+  // Verify the provided data matches what was used to request OTP
+  const { userData } = pendingRegistration;
+  if (userData.name !== name || userData.email !== email || userData.password !== password || userData.phone !== phone) {
+    throw new ValidationError('Registration data does not match OTP request');
+  }
+
+  // Check if customer already exists (safety check)
+  const existingCustomer = await Customer.findOne({ email });
+  if (existingCustomer) {
+    // Remove pending registration
+    pendingRegistrations.delete(email);
+    throw new ValidationError('Account already exists with this email');
+  }
+
+  // Create the customer account
+  const customer = new Customer({
+    name,
+    email,
+    password,
+    phone,
+    isEmailVerified: true // Mark as verified since OTP is confirmed
+  });
+
+  await customer.save();
+
+  // Remove pending registration
+  pendingRegistrations.delete(email);
+
+  // Generate token for auto-login
+  const token = generateCustomerToken({
+    customerId: customer._id.toString(),
+    email: customer.email,
+    isEmailVerified: customer.isEmailVerified
+  });
+
+  // Set cookie
+  res.cookie('customerToken', token, getCookieOptions());
+
+  res.status(201).json({
+    success: true,
+    message: 'Account created successfully! You are now logged in.',
+    data: {
+      customer: {
+        id: customer._id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        isEmailVerified: customer.isEmailVerified
+      },
+      token
+    }
+  });
+});
+
+// Temporary storage for pending registrations (in production, use Redis)
+const pendingRegistrations = new Map<string, {
+  userData: any;
+  otp: string;
+  expiresAt: Date;
+}>();
+
+// Helper function to generate OTP
+const generateOTP = () => {
+  // In development, use fixed OTP for easier testing
+  const otp = process.env.NODE_ENV === 'development' ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date();
+  expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiry
+  return { otp, expiresAt };
+};
+
+// Helper function to validate OTP
+const isOTPValid = (storedOTP: string, storedExpiry: Date, providedOTP: string): boolean => {
+  return storedOTP === providedOTP && new Date() <= storedExpiry;
+};
+
+const getCookieOptions = () => ({
+  httpOnly: true,
+  secure: config.NODE_ENV === 'production',
+  sameSite: 'strict' as const,
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+  path: '/'
+});
+
+// Verify OTP (kept for backward compatibility and direct OTP verification)
 export const verifyOTP = asyncHandler(async (req: Request, res: Response) => {
   const { email, otp } = verifyOTPSchema.parse(req.body);
 
