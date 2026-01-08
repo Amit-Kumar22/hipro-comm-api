@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import { z } from 'zod';
 import { Payment, Order } from '../models';
 import { 
@@ -145,20 +144,17 @@ export const verifyPayment = asyncHandler(async (req: CustomerAuthenticatedReque
   const validatedData = verifyPaymentSchema.parse(req.body);
   const { paymentId, orderId, signature, gatewayPaymentId } = validatedData;
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     // Find payment and order
     const payment = await Payment.findOne({ 
       _id: paymentId, 
       customer: req.customer._id 
-    }).session(session);
+    });
     
     const order = await Order.findOne({ 
       _id: orderId, 
       user: req.customer._id 
-    }).session(session);
+    });
 
     if (!payment || !order) {
       throw new NotFoundError('Payment or order not found');
@@ -175,9 +171,7 @@ export const verifyPayment = asyncHandler(async (req: CustomerAuthenticatedReque
     if (!isSignatureValid) {
       // Update payment as failed
       payment.status = 'FAILED';
-      await payment.save({ session });
-      
-      await session.commitTransaction();
+      await payment.save();
       
       res.status(400).json({
         success: false,
@@ -194,7 +188,7 @@ export const verifyPayment = asyncHandler(async (req: CustomerAuthenticatedReque
     payment.status = 'SUCCESS';
     payment.gateway.gatewayPaymentId = gatewayPaymentId;
     payment.gateway.signature = signature;
-    await payment.save({ session });
+    await payment.save();
 
     // Update order status
     order.status = 'PAID';
@@ -211,9 +205,7 @@ export const verifyPayment = asyncHandler(async (req: CustomerAuthenticatedReque
       throw new AppError('Failed to confirm stock sale', 500);
     }
 
-    await order.save({ session });
-
-    await session.commitTransaction();
+    await order.save();
 
     res.json({
       success: true,
@@ -230,10 +222,7 @@ export const verifyPayment = asyncHandler(async (req: CustomerAuthenticatedReque
     });
 
   } catch (error) {
-    await session.abortTransaction();
     throw error;
-  } finally {
-    session.endSession();
   }
 });
 
