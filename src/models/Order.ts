@@ -407,19 +407,8 @@ OrderSchema.methods.cancelOrder = async function(reason: string, userId?: string
 };
 
 OrderSchema.methods.updateStatus = async function(newStatus: OrderStatus, note?: string, userId?: string): Promise<IOrder> {
-  const validTransitions: Record<OrderStatus, OrderStatus[]> = {
-    'PENDING': ['PAID', 'CANCELLED'],
-    'PAID': ['SHIPPED', 'CANCELLED'],
-    'SHIPPED': ['DELIVERED'],
-    'DELIVERED': [],
-    'CANCELLED': []
-  };
-
-  const currentStatus = this.status as OrderStatus;
-  if (!validTransitions[currentStatus]?.includes(newStatus)) {
-    throw new Error(`Invalid status transition from ${currentStatus} to ${newStatus}`);
-  }
-
+  // Allow all status transitions for admin flexibility
+  // Admins should be able to update order status as needed
   this.status = newStatus;
   this.statusHistory.push({
     status: newStatus,
@@ -444,11 +433,11 @@ OrderSchema.methods.processRefund = async function(): Promise<boolean> {
 };
 
 OrderSchema.methods.reserveStock = async function(): Promise<boolean> {
-  const Product = mongoose.model('Product');
+  const { StockManager } = await import('../utils/stockManager');
   
   for (const item of this.items) {
-    const product = await Product.findById(item.product);
-    if (!product || !(await product.reserveStock(item.quantity))) {
+    const success = await StockManager.reserveStock(item.product.toString(), item.quantity);
+    if (!success) {
       return false;
     }
   }
@@ -456,23 +445,20 @@ OrderSchema.methods.reserveStock = async function(): Promise<boolean> {
 };
 
 OrderSchema.methods.releaseStock = async function(): Promise<boolean> {
-  const Product = mongoose.model('Product');
+  const { StockManager } = await import('../utils/stockManager');
   
   for (const item of this.items) {
-    const product = await Product.findById(item.product);
-    if (product) {
-      await product.releaseStock(item.quantity);
-    }
+    await StockManager.releaseStock(item.product.toString(), item.quantity);
   }
   return true;
 };
 
 OrderSchema.methods.confirmSale = async function(): Promise<boolean> {
-  const Product = mongoose.model('Product');
+  const { StockManager } = await import('../utils/stockManager');
   
   for (const item of this.items) {
-    const product = await Product.findById(item.product);
-    if (!product || !(await product.confirmSale(item.quantity))) {
+    const success = await StockManager.confirmSale(item.product.toString(), item.quantity);
+    if (!success) {
       return false;
     }
   }

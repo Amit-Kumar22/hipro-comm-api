@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { z } from 'zod';
 import { Cart, Order, Payment, Product } from '../models';
+import { StockManager } from '../utils/stockManager';
 import { 
   asyncHandler, 
   ValidationError, 
@@ -147,15 +148,31 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
       }]
     });
 
-    // Reserve stock for all items
+    // Reserve stock for all items using StockManager
     for (const item of orderItems) {
       const product = await Product.findById(item.product);
-      if (!product || !(await product.reserveStock(item.quantity))) {
+      if (!product || !product.isActive || !product.inStock) {
+        throw new ValidationError(`Product ${item.name} is no longer available`);
+      }
+
+      if (product.stock.available < item.quantity) {
+        throw new ValidationError(
+          `Insufficient stock for ${product.name}. Available: ${product.stock.available}, Requested: ${item.quantity}`
+        );
+      }
+
+      // Use StockManager to reserve stock and update inventory
+      const reserved = await StockManager.reserveStock(item.product.toString(), item.quantity);
+      if (!reserved) {
         throw new ValidationError(`Failed to reserve stock for ${item.name}`);
       }
     }
 
     await order.save();
+
+    // For COD orders, we keep stock reserved until delivery
+    // For online orders, we keep stock reserved until payment is confirmed
+    // Stock will be confirmed (reduced) when payment is processed or on delivery for COD
 
     // Create payment record
     const payment = new Payment({
