@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import { z } from 'zod';
 import { Cart, Order, Payment, Product } from '../models';
 import { 
@@ -68,15 +67,12 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
   const validatedData = createOrderSchema.parse(req.body);
   const { shippingAddress, billingAddress, paymentMethod, appliedCoupons } = validatedData;
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     // Get customer cart
     const cart = await Cart.findOne({ customer: req.customer._id }).populate({
       path: 'items.product',
       select: 'name sku price stock isActive inStock'
-    }).session(session);
+    });
 
     if (!cart || cart.items.length === 0) {
       throw new ValidationError('Cart is empty');
@@ -124,7 +120,7 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
     // Generate order number
     const date = new Date();
     const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-    const timeStr = date.getTime().toString().slice(-6);
+    const timeStr = date.getTime().toString().slice(-4);
     const orderNumber = `ORD-${dateStr}-${timeStr}`;
 
     // Create order
@@ -153,13 +149,13 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
 
     // Reserve stock for all items
     for (const item of orderItems) {
-      const product = await Product.findById(item.product).session(session);
+      const product = await Product.findById(item.product);
       if (!product || !(await product.reserveStock(item.quantity))) {
         throw new ValidationError(`Failed to reserve stock for ${item.name}`);
       }
     }
 
-    await order.save({ session });
+    await order.save();
 
     // Create payment record
     const payment = new Payment({
@@ -180,20 +176,17 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
       }
     });
 
-    await payment.save({ session });
+    await payment.save();
 
     // Link payment to order
     order.paymentId = payment._id;
-    await order.save({ session });
+    await order.save();
 
     // Clear cart after successful order creation
     await Cart.findOneAndUpdate(
       { customer: req.customer._id },
-      { $set: { items: [] } },
-      { session }
+      { $set: { items: [] } }
     );
-
-    await session.commitTransaction();
 
     res.status(201).json({
       success: true,
@@ -210,10 +203,7 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
     });
 
   } catch (error) {
-    await session.abortTransaction();
     throw error;
-  } finally {
-    session.endSession();
   }
 });
 
@@ -258,6 +248,8 @@ export const getOrders = asyncHandler(async (req: CustomerAuthenticatedRequest, 
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
     totals: order.totals,
+    shippingAddress: order.shippingAddress,
+    billingAddress: order.billingAddress,
     itemsCount: order.items.length,
     totalItems: order.items.reduce((sum, item) => sum + item.quantity, 0),
     createdAt: order.createdAt,
@@ -403,4 +395,59 @@ export const cancelOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
 export const updateOrderStatus = asyncHandler(async (_req: CustomerAuthenticatedRequest, _res: Response) => {
   // This would typically be admin-only, but including for completeness
   throw new ValidationError('This endpoint is for admin use only');
+});
+
+/**
+ * @swagger
+ * /api/v1/orders/stats:
+ *   get:
+ *     summary: Get customer's order statistics
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getOrderStats = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const customerId = req.customer._id;
+
+  // Get all orders for the customer
+  const orders = await Order.find({ user: customerId });
+
+  // Calculate statistics
+  const totalOrders = orders.length;
+  const totalSpent = orders.reduce((sum, order) => sum + (order.totals?.total || 0), 0);
+
+  // Status breakdown
+  const statusBreakdown = orders.reduce((acc: any, order) => {
+    const status = order.status;
+    if (!acc[status]) {
+      acc[status] = { count: 0, amount: 0 };
+    }
+    acc[status].count++;
+    acc[status].amount += (order.totals?.total || 0);
+    return acc;
+  }, {});
+
+  // Recent orders (last 30 days)
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  
+  const recentOrders = orders.filter(order => 
+    new Date(order.createdAt) >= thirtyDaysAgo
+  );
+
+  res.json({
+    success: true,
+    data: {
+      totalOrders,
+      totalSpent,
+      statusBreakdown,
+      recentOrdersCount: recentOrders.length,
+      averageOrderValue: totalOrders > 0 ? totalSpent / totalOrders : 0,
+      lastOrderDate: orders.length > 0 ? orders[orders.length - 1]?.createdAt : null
+    }
+  });
 });

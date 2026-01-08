@@ -4,6 +4,7 @@ import {
   createOrder,
   getOrders,
   getOrderById,
+  getOrderStats,
   cancelOrder,
   updateOrderStatus
 } from '../controllers/orderController.js';
@@ -18,6 +19,9 @@ router.post('/', createOrder);
 
 // Get customer's orders
 router.get('/', getOrders);
+
+// Get order statistics (must come before /:orderId to avoid conflict)
+router.get('/stats', getOrderStats);
 
 // Get specific order details
 router.get('/:orderId', getOrderById);

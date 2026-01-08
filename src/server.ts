@@ -20,6 +20,7 @@ import paymentsRoutes from './routes/payments.js';
 import userRoutes from './routes/users.js';
 import adminRoutes from './routes/admin.js';
 import customerRoutes from './routes/customers.js';
+import profileRoutes from './routes/profile.js';
 
 const app = express();
 
@@ -163,6 +164,7 @@ app.get('/docs', (req, res) => {
 // API routes with versioning
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers', customerRoutes);
+app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/cart', cartRoutes);
