@@ -311,3 +311,29 @@ export const bulkUpdateInventory = asyncHandler(async (req: AuthenticatedRequest
     data: results
   });
 });
+
+/**
+ * @swagger
+ * /api/v1/inventory/sync:
+ *   post:
+ *     summary: Synchronize inventory with product stock levels
+ */
+export const syncInventory = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { StockManager } = await import('../utils/stockManager');
+    const results = await StockManager.syncAllInventory();
+
+    res.json({
+      success: true,
+      message: `Inventory sync completed: ${results.success} successful, ${results.failed} failed`,
+      data: results
+    });
+
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to sync inventory',
+      error: error.message
+    });
+  }
+});

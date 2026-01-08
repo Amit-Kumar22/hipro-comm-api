@@ -6,7 +6,8 @@ import {
   adjustStock,
   getLowStockItems,
   getInventoryStats,
-  bulkUpdateInventory
+  bulkUpdateInventory,
+  syncInventory
 } from '../controllers/inventoryController';
 import { authenticate, requireAdmin } from '../middleware/authMiddleware';
 
@@ -22,6 +23,7 @@ router.use(requireAdmin);
 router.get('/', getInventory);
 router.get('/stats', getInventoryStats);
 router.get('/low-stock', getLowStockItems);
+router.post('/sync', syncInventory);
 router.get('/:id', getInventoryItem);
 router.put('/:id', updateInventory);
 router.post('/:id/adjust', adjustStock);

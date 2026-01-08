@@ -6,7 +6,10 @@ import {
   updateUserRole,
   deleteUser,
   getRecentActivity,
-  getSystemInfo
+  getSystemInfo,
+  getAllOrders,
+  getOrderStats,
+  updateOrderStatus
 } from '../controllers/adminController';
 import { authenticate, requireAdmin } from '../middleware/authMiddleware';
 
@@ -24,6 +27,11 @@ router.get('/users', getAllUsers);
 router.get('/users/:id', getUserById);
 router.put('/users/:id/role', updateUserRole);
 router.delete('/users/:id', deleteUser);
+
+// Order Management
+router.get('/orders', getAllOrders);
+router.get('/orders/stats', getOrderStats);
+router.put('/orders/:orderId/status', updateOrderStatus);
 
 // System
 router.get('/system', getSystemInfo);

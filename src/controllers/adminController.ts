@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { z } from 'zod';
-import { User, Product, Category } from '../models';
+import { User, Product, Category, Order, Inventory } from '../models';
+import { StockManager } from '../utils/stockManager';
 import { 
   asyncHandler, 
   ValidationError, 
@@ -263,5 +264,142 @@ export const getSystemInfo = asyncHandler(async (req: AuthenticatedRequest, res:
   res.json({
     success: true,
     data: { systemInfo }
+  });
+});
+
+// Admin Order Management Functions
+
+// Get All Orders (Admin)
+export const getAllOrders = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 20;
+  const status = req.query.status as string;
+  const search = req.query.search as string;
+
+  // Build filter
+  const filter: any = {};
+  if (status) filter.status = status;
+  
+  // Search in order number or customer info
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    const matchingUsers = await User.find({
+      $or: [
+        { name: searchRegex },
+        { email: searchRegex }
+      ]
+    }).select('_id');
+    
+    const userIds = matchingUsers.map(user => user._id);
+    filter.$or = [
+      { orderNumber: searchRegex },
+      { user: { $in: userIds } }
+    ];
+  }
+
+  const orders = await Order.find(filter)
+    .populate('user', 'name email')
+    .populate('items.product', 'name images')
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit);
+
+  const total = await Order.countDocuments(filter);
+
+  res.json({
+    success: true,
+    data: {
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    }
+  });
+});
+
+// Get Order Stats (Admin)
+export const getOrderStats = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const orders = await Order.find({});
+  
+  const totalOrders = orders.length;
+  const totalRevenue = orders.reduce((sum, order) => sum + (order.totals?.total || 0), 0);
+  
+  // Today's stats
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayOrders = await Order.find({ createdAt: { $gte: today } });
+  
+  const todaysOrders = todayOrders.length;
+  const todaysRevenue = todayOrders.reduce((sum, order) => sum + (order.totals?.total || 0), 0);
+  
+  // Status breakdown
+  const statusCounts = orders.reduce((acc: any, order) => {
+    acc[order.status] = (acc[order.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  res.json({
+    success: true,
+    data: {
+      totalOrders,
+      totalRevenue,
+      todaysOrders,
+      todaysRevenue,
+      statusBreakdown: statusCounts
+    }
+  });
+});
+
+// Update Order Status (Admin)
+export const updateOrderStatus = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { orderId } = req.params;
+  const { status, notes, tracking } = req.body;
+
+  const order = await Order.findById(orderId);
+  if (!order) {
+    throw new NotFoundError('Order not found');
+  }
+
+  const previousStatus = order.status;
+  
+  // Use the order's updateStatus method 
+  await order.updateStatus(status, notes, req.user?._id?.toString());
+  
+  // Handle stock management based on status changes using StockManager
+  if (status === 'PAID' && previousStatus === 'PENDING') {
+    // Confirm sale when payment is completed
+    await order.confirmSale();
+  } else if (status === 'CANCELLED') {
+    // Release stock when order is cancelled
+    await order.releaseStock();
+  } else if (status === 'DELIVERED' && order.paymentMethod === 'cod' && previousStatus === 'SHIPPED') {
+    // Confirm COD sale when delivered
+    await order.confirmSale();
+  }
+  
+  if (tracking) {
+    order.tracking = { ...order.tracking, ...tracking };
+  }
+  if (notes && !order.notes?.includes(notes)) {
+    order.notes = order.notes ? `${order.notes}\n${notes}` : notes;
+  }
+
+  await order.save();
+
+  // Force sync inventory for all products in this order
+  for (const item of order.items) {
+    await StockManager.ensureInventoryRecord(item.product.toString());
+  }
+
+  await order.populate('user', 'name email');
+  await order.populate('items.product', 'name images');
+
+  res.json({
+    success: true,
+    message: 'Order status updated successfully',
+    data: order
   });
 });

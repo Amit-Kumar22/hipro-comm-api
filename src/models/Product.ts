@@ -309,6 +309,16 @@ ProductSchema.methods.reserveStock = async function(quantity: number): Promise<b
   this.inStock = this.stock.available > 0;
   
   await this.save();
+  
+  // Also update inventory if it exists
+  const Inventory = mongoose.model('Inventory');
+  const inventory = await Inventory.findOne({ product: this._id });
+  if (inventory) {
+    inventory.quantityReserved = this.stock.reserved;
+    inventory.quantityAvailable = this.stock.available;
+    await inventory.save();
+  }
+  
   return true;
 };
 
@@ -318,6 +328,16 @@ ProductSchema.methods.releaseStock = async function(quantity: number): Promise<b
   this.inStock = this.stock.available > 0;
   
   await this.save();
+  
+  // Also update inventory if it exists
+  const Inventory = mongoose.model('Inventory');
+  const inventory = await Inventory.findOne({ product: this._id });
+  if (inventory) {
+    inventory.quantityReserved = this.stock.reserved;
+    inventory.quantityAvailable = this.stock.available;
+    await inventory.save();
+  }
+  
   return true;
 };
 
@@ -332,6 +352,16 @@ ProductSchema.methods.confirmSale = async function(quantity: number): Promise<bo
   this.inStock = this.stock.available > 0;
   
   await this.save();
+  
+  // Also update inventory if it exists
+  const Inventory = mongoose.model('Inventory');
+  const inventory = await Inventory.findOne({ product: this._id });
+  if (inventory) {
+    inventory.quantityAvailable = this.stock.available;
+    inventory.quantityReserved = this.stock.reserved;
+    await inventory.save();
+  }
+  
   return true;
 };
 
