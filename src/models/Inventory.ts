@@ -129,7 +129,22 @@ const InventorySchema = new Schema<IInventory>({
     default: true
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  // Include virtuals when converting to JSON
+  toJSON: {
+    virtuals: true,
+    transform: function(doc, ret) {
+      // Ensure virtual properties are calculated and included
+      ret.totalStock = doc.totalStock;
+      ret.availableForSale = doc.availableForSale;
+      ret.isLowStock = doc.isLowStock;
+      ret.isOutOfStock = doc.isOutOfStock;
+      return ret;
+    }
+  },
+  toObject: {
+    virtuals: true
+  }
 });
 
 // Stock Reservation Schema

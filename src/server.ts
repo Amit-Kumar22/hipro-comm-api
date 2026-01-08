@@ -14,6 +14,7 @@ import { errorHandler, notFound } from './middleware/errorMiddleware.js';
 import authRoutes from './routes/auth.js';
 import categoryRoutes from './routes/categories.js';
 import productRoutes from './routes/products.js';
+import inventoryRoutes from './routes/inventory.js';
 import cartRoutes from './routes/cart.js';
 import orderRoutes from './routes/orders.js';
 import paymentsRoutes from './routes/payments.js';
@@ -131,6 +132,7 @@ if (config.NODE_ENV !== 'test') {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
+  console.log('🏥 Health check request received from:', req.ip, req.headers['user-agent']);
   res.status(200).json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -165,6 +167,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers', customerRoutes);
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/products', productRoutes);
+app.use('/api/v1/inventory', inventoryRoutes);
 app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/payments', paymentsRoutes);
@@ -184,12 +187,12 @@ const startServer = async () => {
     
     const PORT = config.PORT;
     
-    app.listen(PORT, () => {
+    app.listen(PORT, '127.0.0.1', () => {
       console.log(`🚀 Server running on port ${PORT} in ${config.NODE_ENV} mode`);
-      console.log(`📍 API Base URL: http://localhost:${PORT}/api/v1`);
-      console.log(`📚 API Documentation: http://localhost:${PORT}/api/docs`);
+      console.log(`📍 API Base URL: http://127.0.0.1:${PORT}/api/v1`);
+      console.log(`📚 API Documentation: http://127.0.0.1:${PORT}/api/docs`);
       console.log(`🌐 CORS Origin: ${config.FRONTEND_URL}`);
-      console.log(`📋 Health Check: http://localhost:${PORT}/health`);
+      console.log(`📋 Health Check: http://127.0.0.1:${PORT}/health`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
