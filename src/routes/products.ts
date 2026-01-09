@@ -5,6 +5,7 @@ import {
   getProductBySlug,
   createProduct,
   updateProduct,
+  updateProductStock,
   deleteProduct,
   getFeaturedProducts,
   getProductsByCategory
@@ -23,6 +24,7 @@ router.get('/:id', getProduct);
 // Protected routes (Admin only)
 router.post('/', authenticate, requireAdmin, createProduct);
 router.put('/:id', authenticate, requireAdmin, updateProduct);
+router.patch('/:id/stock', authenticate, requireAdmin, updateProductStock);
 router.delete('/:id', authenticate, requireAdmin, deleteProduct);
 
 export default router;

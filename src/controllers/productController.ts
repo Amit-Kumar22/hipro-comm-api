@@ -59,7 +59,10 @@ const createProductSchema = z.object({
 });
 
 // Validation schema for updating products
-const updateProductSchema = createProductSchema.partial();
+const updateProductSchema = createProductSchema.partial().extend({
+  // Allow stock updates
+  stockQuantity: z.number().min(0, 'Stock quantity cannot be negative').optional()
+});
 
 /**
  * @swagger
@@ -541,6 +544,20 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     updateData = { ...validatedData, slug: newSlug };
   }
 
+  // Handle stock quantity update
+  if (validatedData.stockQuantity !== undefined) {
+    updateData.stock = {
+      ...product.stock,
+      quantity: validatedData.stockQuantity,
+      available: Math.max(0, validatedData.stockQuantity - product.stock.reserved)
+    };
+    updateData.inStock = updateData.stock.available > 0;
+    
+    // Remove stockQuantity from updateData since it's not a direct product field
+    const { stockQuantity, ...productUpdateData } = updateData;
+    updateData = productUpdateData;
+  }
+
   // Update product
   const updatedProduct = await Product.findByIdAndUpdate(
     id,
@@ -548,9 +565,26 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     { new: true, runValidators: true }
   ).populate('category', 'name slug');
 
+  // Update inventory if stock quantity was changed
+  if (validatedData.stockQuantity !== undefined) {
+    const { StockManager } = await import('../utils/stockManager');
+    await StockManager.ensureInventoryRecord(id);
+    
+    // Update inventory record to sync with new product stock
+    const inventory = await Inventory.findOne({ product: id });
+    if (inventory) {
+      inventory.quantityAvailable = updatedProduct!.stock.available;
+      inventory.quantityReserved = updatedProduct!.stock.reserved;
+      await inventory.save();
+    }
+  }
+
   res.json({
     success: true,
-    data: updatedProduct
+    data: updatedProduct,
+    message: validatedData.stockQuantity !== undefined ? 
+      `Product updated and stock set to ${validatedData.stockQuantity}` : 
+      'Product updated successfully'
   });
 });
 
@@ -662,5 +696,56 @@ export const getProductsByCategory = asyncHandler(async (req: Request, res: Resp
       },
       category
     }
+  });
+});
+
+// Update product stock (Admin only)
+export const updateProductStock = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { quantity } = req.body;
+
+  // Validate input
+  const stockSchema = z.object({
+    quantity: z.number().min(0, 'Stock quantity cannot be negative')
+  });
+
+  const validatedData = stockSchema.parse({ quantity });
+
+  const product = await Product.findById(id);
+  if (!product) {
+    throw new NotFoundError('Product not found');
+  }
+
+  // Update product stock
+  product.stock.quantity = validatedData.quantity;
+  product.stock.available = Math.max(0, validatedData.quantity - product.stock.reserved);
+  product.inStock = product.stock.available > 0;
+  
+  await product.save();
+
+  // Update inventory record using StockManager
+  const { StockManager } = await import('../utils/stockManager');
+  await StockManager.ensureInventoryRecord(id);
+  
+  // Update inventory to sync with new product stock
+  const inventory = await Inventory.findOne({ product: id });
+  if (inventory) {
+    inventory.quantityAvailable = product.stock.available;
+    inventory.quantityReserved = product.stock.reserved;
+    inventory.lastRestocked = new Date();
+    await inventory.save();
+  }
+
+  // Return updated product with inventory
+  const updatedProduct = await Product.findById(id).populate('category', 'name slug');
+  const updatedInventory = await Inventory.findOne({ product: id });
+
+  res.json({
+    success: true,
+    data: {
+      product: updatedProduct,
+      inventory: updatedInventory
+    },
+    message: `Stock updated to ${validatedData.quantity} units`
   });
 });

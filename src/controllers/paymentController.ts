@@ -443,6 +443,13 @@ export const simulatePaymentSuccess = asyncHandler(async (req: CustomerAuthentic
       timestamp: new Date(),
       note: 'Payment simulated as successful'
     });
+    
+    // Confirm sale for all order items (convert reserved stock to sold)
+    const success = await order.confirmSale();
+    if (!success) {
+      throw new AppError('Failed to confirm stock sale', 500);
+    }
+    
     await order.save();
   }
 
