@@ -37,6 +37,13 @@ app.use((req, res, next) => {
     return next();
   }
   
+  // Allowed origins for production
+  const allowedOrigins = [
+    'https://shop.hiprotech.org',
+    'https://admin.shop.hiprotech.org',
+    config.FRONTEND_URL
+  ];
+  
   // In development, allow all localhost origins
   if (config.NODE_ENV === 'development') {
     if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
@@ -52,8 +59,8 @@ app.use((req, res, next) => {
     }
   }
   
-  // For production, check against FRONTEND_URL
-  if (origin === config.FRONTEND_URL) {
+  // For production, check against allowed origins
+  if (allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
@@ -85,8 +92,13 @@ app.use(cors({
       }
     }
     
-    // In production or for specific origins, check against FRONTEND_URL
-    const allowedOrigins = [config.FRONTEND_URL];
+    // In production, check against allowed origins
+    const allowedOrigins = [
+      'https://shop.hiprotech.org',
+      'https://admin.shop.hiprotech.org',
+      config.FRONTEND_URL
+    ];
+    
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }

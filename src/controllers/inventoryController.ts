@@ -320,13 +320,32 @@ export const bulkUpdateInventory = asyncHandler(async (req: AuthenticatedRequest
  */
 export const syncInventory = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const { Product } = await import('../models');
     const { StockManager } = await import('../utils/stockManager');
-    const results = await StockManager.syncAllInventory();
+    
+    // Get all products and ensure inventory records exist
+    const products = await Product.find();
+    let successCount = 0;
+    let failedCount = 0;
+    
+    for (const product of products) {
+      try {
+        await StockManager.ensureInventoryRecord(product._id.toString());
+        successCount++;
+      } catch (error) {
+        failedCount++;
+        console.error(`Failed to sync inventory for product ${product._id}:`, error);
+      }
+    }
 
     res.json({
       success: true,
-      message: `Inventory sync completed: ${results.success} successful, ${results.failed} failed`,
-      data: results
+      message: `Inventory sync completed: ${successCount} successful, ${failedCount} failed`,
+      data: {
+        success: successCount,
+        failed: failedCount,
+        total: products.length
+      }
     });
 
   } catch (error: any) {
