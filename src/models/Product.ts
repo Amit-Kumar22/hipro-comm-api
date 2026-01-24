@@ -291,10 +291,27 @@ ProductSchema.pre('save', function(this: IProduct) {
     this.price.discount = original > selling ? Math.round(((original - selling) / original) * 100) : 0;
   }
   
-  // Calculate available stock
-  if (this.isModified('stock')) {
-    this.stock.available = Math.max(0, this.stock.quantity - this.stock.reserved);
+  // Calculate available stock and ensure consistency
+  if (this.isModified('stock') || this.isNew) {
+    // Ensure stock fields exist with defaults
+    if (!this.stock) {
+      this.stock = { quantity: 0, reserved: 0, available: 0 };
+    }
+    
+    // Calculate available stock
+    this.stock.available = Math.max(0, this.stock.quantity - (this.stock.reserved || 0));
+    
+    // Set inStock based on available stock
     this.inStock = this.stock.available > 0;
+    
+    // Console log for debugging stock updates
+    console.log('📦 Product Stock Update:', {
+      productName: this.name,
+      stockQuantity: this.stock.quantity,
+      stockReserved: this.stock.reserved,
+      stockAvailable: this.stock.available,
+      inStock: this.inStock
+    });
   }
 });
 
@@ -368,6 +385,55 @@ ProductSchema.methods.confirmSale = async function(quantity: number): Promise<bo
 // Virtual for primary image
 ProductSchema.virtual('primaryImage').get(function(this: IProduct) {
   return this.images.find(img => img.isPrimary) || this.images[0];
+});
+
+// Virtual field for available stock (non-circular)
+ProductSchema.virtual('availableStock').get(function(this: IProduct) {
+  // Unified getter for available stock - only use actual product fields
+  if (this.stock?.available !== undefined) {
+    return this.stock.available;
+  }
+  if (this.stock?.quantity !== undefined) {
+    return Math.max(0, this.stock.quantity - (this.stock.reserved || 0));
+  }
+  return 0;
+});
+
+// Include virtual fields in JSON output (simplified to avoid circular references)
+ProductSchema.set('toJSON', { 
+  virtuals: true,
+  transform: function(doc, ret) {
+    // Use any type to handle dynamic inventory field
+    const retAny = ret as any;
+    
+    // Only add inventory.availableForSale if it doesn't already exist
+    // and avoid circular references
+    if (!retAny.inventory && doc.stock) {
+      retAny.inventory = {
+        availableForSale: doc.stock.available || Math.max(0, (doc.stock.quantity || 0) - (doc.stock.reserved || 0))
+      };
+    }
+    
+    return ret;
+  }
+});
+
+ProductSchema.set('toObject', { 
+  virtuals: true,
+  transform: function(doc, ret) {
+    // Use any type to handle dynamic inventory field
+    const retAny = ret as any;
+    
+    // Only add inventory.availableForSale if it doesn't already exist
+    // and avoid circular references
+    if (!retAny.inventory && doc.stock) {
+      retAny.inventory = {
+        availableForSale: doc.stock.available || Math.max(0, (doc.stock.quantity || 0) - (doc.stock.reserved || 0))
+      };
+    }
+    
+    return ret;
+  }
 });
 
 export const Product = mongoose.model<IProduct>('Product', ProductSchema);

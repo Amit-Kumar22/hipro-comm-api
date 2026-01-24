@@ -140,13 +140,51 @@ export const addToCart = asyncHandler(async (req: CustomerAuthenticatedRequest, 
     throw new ValidationError('Product is not available');
   }
 
-  if (!product.inStock) {
+  // Check stock availability with comprehensive logic
+  const productAny = product as any; // Type assertion to access inventory field
+  
+  // Get available stock using a more reliable method
+  let availableStock = 0;
+  
+  // Try inventory field first (for products created through admin)
+  if (productAny.inventory?.availableForSale !== undefined) {
+    availableStock = productAny.inventory.availableForSale;
+  }
+  // Try separate inventory collection
+  else {
+    const { Inventory } = await import('../models');
+    const inventory = await Inventory.findOne({ product: product._id });
+    if (inventory?.quantityAvailable !== undefined) {
+      availableStock = inventory.quantityAvailable;
+    }
+    // Fallback to product stock fields
+    else if (product.stock?.available !== undefined) {
+      availableStock = product.stock.available;
+    } else if (product.stock?.quantity !== undefined) {
+      availableStock = Math.max(0, product.stock.quantity - (product.stock.reserved || 0));
+    }
+  }
+
+  // Console log for debugging
+  console.log('🔍 Stock Check Debug:', {
+    productName: product.name,
+    productId: product._id,
+    inventoryAvailableForSale: productAny.inventory?.availableForSale,
+    stockAvailable: product.stock?.available,
+    stockQuantity: product.stock?.quantity,
+    stockReserved: product.stock?.reserved,
+    finalAvailableStock: availableStock,
+    inStock: product.inStock,
+    isActive: product.isActive,
+    requestedQuantity: quantity
+  });
+
+  // Check if product is marked as out of stock
+  if (!product.inStock && availableStock <= 0) {
     throw new ValidationError('Product is out of stock');
   }
 
-  // Check stock availability - use inventory field if available in response, otherwise use stock
-  const productAny = product as any; // Type assertion to access inventory field
-  const availableStock = productAny.inventory?.availableForSale || product.stock.available || 0;
+  // Check if sufficient stock is available
   if (availableStock < quantity) {
     throw new ValidationError(`Only ${availableStock} items available in stock`);
   }
@@ -251,8 +289,29 @@ export const updateCartItem = asyncHandler(async (req: CustomerAuthenticatedRequ
       throw new NotFoundError('Product not found');
     }
 
-    if (product.stock.available < quantity) {
-      throw new ValidationError(`Only ${product.stock.available} items available in stock`);
+    // Import Inventory model to check actual available stock
+    const { Inventory } = await import('../models/index.js');
+    const inventoryData = await Inventory.findOne({ product: cartItem.product });
+    
+    // Use inventory data as primary source, fall back to product stock
+    // Handle both old and new inventory field structures
+    const inventoryStock = inventoryData?.availableForSale || inventoryData?.quantityAvailable || 0;
+    const availableStock = inventoryStock || product.stock?.available || 0;
+    
+    console.log('🔍 Stock validation for cart update:', {
+      productId: product._id.toString(),
+      productName: product.name,
+      requestedQuantity: quantity,
+      stockAvailable: product.stock?.available || 0,
+      inventoryAvailableForSale: inventoryData?.availableForSale || 0,
+      inventoryQuantityAvailable: inventoryData?.quantityAvailable || 0,
+      finalAvailableStock: availableStock,
+      hasInventory: !!inventoryData,
+      hasStock: !!product.stock
+    });
+
+    if (availableStock < quantity) {
+      throw new ValidationError(`Only ${availableStock} items available in stock`);
     }
 
     // Update quantity
