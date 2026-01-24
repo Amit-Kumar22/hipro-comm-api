@@ -1,0 +1,32 @@
+[Unit]
+Description=HiPro Commerce API Server
+Documentation=https://github.com/Amit-Kumar22/hipro-comm
+After=network.target mongod.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/hipro-comm-api
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=hipro-api
+Environment=NODE_ENV=production
+Environment=PORT=5000
+Environment=MONGODB_URI=mongodb://localhost:27017/hipro-comm-prod
+Environment=JWT_SECRET=your-production-jwt-secret-change-this
+Environment=JWT_EXPIRES_IN=7d
+Environment=COOKIE_SECRET=your-production-cookie-secret-change-this
+Environment=FRONTEND_URL=https://shop.hiprotech.org
+Environment=RATE_LIMIT_WINDOW_MS=900000
+Environment=RATE_LIMIT_MAX_REQUESTS=100
+Environment=SMTP_HOST=smtp.hostinger.com
+Environment=SMTP_PORT=587
+Environment=SMTP_USER=info@hiprotech.org
+Environment=SMTP_PASS=Abhi@2026
+Environment=SMTP_FROM_NAME=HiPro Commerce
+
+[Install]
+WantedBy=multi-user.target
