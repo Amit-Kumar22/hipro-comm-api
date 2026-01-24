@@ -567,6 +567,9 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
 
   // Update inventory if stock quantity was changed
   if (validatedData.stockQuantity !== undefined) {
+    if (!id) {
+      throw new ValidationError('Product ID is required');
+    }
     const { StockManager } = await import('../utils/stockManager');
     await StockManager.ensureInventoryRecord(id);
     
@@ -724,6 +727,9 @@ export const updateProductStock = asyncHandler(async (req: AuthenticatedRequest,
   await product.save();
 
   // Update inventory record using StockManager
+  if (!id) {
+    throw new ValidationError('Product ID is required');
+  }
   const { StockManager } = await import('../utils/stockManager');
   await StockManager.ensureInventoryRecord(id);
   
