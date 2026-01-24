@@ -477,16 +477,27 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   // Remove inventory-specific fields from product data
   const { initialStock, reorderLevel, maxStockLevel, ...productOnlyData } = productData;
 
+  // Ensure stock field is properly initialized in product
+  const productWithStock = {
+    ...productOnlyData,
+    stock: {
+      quantity: initialStock || 0,
+      reserved: 0,
+      available: initialStock || 0
+    },
+    inStock: (initialStock || 0) > 0
+  };
+
   // Create product
-  const product = await Product.create(productOnlyData);
+  const product = await Product.create(productWithStock);
 
   // Create inventory record
   await Inventory.create({
     product: product._id,
     sku: product.sku,
-    quantityAvailable: initialStock,
-    reorderLevel,
-    maxStockLevel,
+    quantityAvailable: initialStock || 0,
+    reorderLevel: reorderLevel || 10,
+    maxStockLevel: maxStockLevel || 1000,
     supplier: {
       name: 'Default Supplier',
       contact: 'supplier@example.com',
@@ -498,7 +509,17 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   const populatedProduct = await Product.findById(product._id)
     .populate('category', 'name slug');
 
+  // Get the inventory for response
   const inventory = await Inventory.findOne({ product: product._id });
+
+  console.log('✅ Product Created Successfully:', {
+    productId: product._id,
+    productName: product.name,
+    stockQuantity: product.stock.quantity,
+    stockAvailable: product.stock.available,
+    inventoryAvailable: inventory?.quantityAvailable,
+    inStock: product.inStock
+  });
 
   res.status(201).json({
     success: true,
