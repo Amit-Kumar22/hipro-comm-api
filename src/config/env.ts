@@ -10,6 +10,7 @@ export const config = {
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   COOKIE_SECRET: process.env.COOKIE_SECRET || 'your-cookie-secret',
   FRONTEND_URL: process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000',
+   ADMIN_URL: process.env.ADMIN_URL || 'http://localhost:3202',
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
   RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
   MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE || '10485760', 10),
@@ -28,10 +29,9 @@ const requiredEnvVars = ['JWT_SECRET'];
 
 if (config.NODE_ENV === 'production') {
   requiredEnvVars.push('MONGODB_URI');
-}
-
-for (const envVar of requiredEnvVars) {
+  for (const envVar of requiredEnvVars) {
   if (!process.env[envVar]) {
     throw new Error(`Missing required environment variable: ${envVar}`);
   }
+}
 }
