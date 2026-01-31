@@ -96,7 +96,8 @@ app.use(cors({
     const allowedOrigins = [
       'https://shop.hiprotech.org',
       'https://admin.shop.hiprotech.org',
-      config.FRONTEND_URL
+      config.FRONTEND_URL,
+      config.ADMIN_URL
     ];
     
     if (allowedOrigins.includes(origin)) {
