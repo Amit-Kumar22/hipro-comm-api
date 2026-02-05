@@ -179,15 +179,47 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response) => {
       response: error instanceof Error ? (error as any).response : undefined
     });
     
-    // Always fail if email cannot be sent - no development mode bypass
-    if (error instanceof Error && (error.message.includes('SMTP is disabled') || error.message.includes('Disabled by user from hPanel'))) {
-      throw new BadRequestError('SMTP email service is disabled in Hostinger control panel. Please enable SMTP in your Hostinger hPanel to send verification emails.');
-    } else if (error instanceof Error && error.message.includes('authentication failed')) {
-      throw new BadRequestError('Email service authentication failed. Please contact support.');
-    } else if (error instanceof Error && (error as any).code === 'ECONNREFUSED') {
-      throw new BadRequestError('Unable to connect to email server. Please try again later or contact support.');
+    // In development mode, allow registration to proceed even if email fails
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔧 [DEV MODE] Email failed but allowing registration to continue for testing');
+      console.log(`🔐 [DEV MODE] Use OTP: ${otp} for email: ${validatedData.email}`);
+      
+      // Re-add the pending registration that was deleted above
+      pendingRegistrations.set(validatedData.email, {
+        userData: validatedData,
+        otp,
+        expiresAt
+      });
+      
+      res.status(200).json({
+        success: true,
+        message: `OTP sent successfully to ${validatedData.email}. Note: In development mode, email sending failed but registration can continue. Check console for OTP.`,
+        devOTP: otp // Only in development
+      });
+      return;
+    }
+    
+    // Production mode - provide better error messages but still maintain security
+    if (error instanceof Error) {
+      const errorMessage = error.message.toLowerCase();
+      
+      if (errorMessage.includes('smtp is disabled') || errorMessage.includes('disabled by user from hPanel')) {
+        throw new BadRequestError('Email service is currently disabled. Please contact support to resolve this issue.');
+      } else if (errorMessage.includes('authentication failed') || errorMessage.includes('credentials')) {
+        throw new BadRequestError('Email service configuration error. Please contact support.');
+      } else if (errorMessage.includes('temporarily unavailable') || 
+                 errorMessage.includes('connection') || 
+                 errorMessage.includes('network') ||
+                 errorMessage.includes('timeout') ||
+                 (error as any).code === 'ECONNREFUSED' ||
+                 (error as any).code === 'ETIMEDOUT' ||
+                 (error as any).code === 'ECONNECTION') {
+        throw new BadRequestError('Email service is temporarily unavailable. Please try again in a few minutes or contact support if the issue persists.');
+      } else {
+        throw new BadRequestError('Unable to send verification email. Please check your email address and try again, or contact support if the issue continues.');
+      }
     } else {
-      throw new BadRequestError('Failed to send verification email. Please check your email address and try again.');
+      throw new BadRequestError('Failed to send verification email. Please try again later or contact support.');
     }
   }
 

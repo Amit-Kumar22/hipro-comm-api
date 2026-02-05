@@ -14,6 +14,7 @@ interface OTPEmailData {
 
 class EmailService {
   private transporter: nodemailer.Transporter;
+  private isConnected: boolean = false;
 
   constructor() {
     console.log('🔧 Initializing Hostinger Email Service (info@hiprotech.org)');
@@ -35,7 +36,10 @@ class EmailService {
       },
       tls: {
         rejectUnauthorized: false
-      }
+      },
+      connectionTimeout: 10000, // 10 seconds
+      greetingTimeout: 10000, // 10 seconds
+      socketTimeout: 10000 // 10 seconds
     });
 
     this.verifyConnection();
@@ -45,14 +49,30 @@ class EmailService {
     try {
       console.log('🔄 Testing Hostinger SMTP connection with user configuration...');
       await this.transporter.verify();
+      this.isConnected = true;
       console.log('✅ Hostinger SMTP connection successful - info@hiprotech.org ready for OTP emails');
     } catch (error: any) {
+      this.isConnected = false;
       console.error('❌ Hostinger SMTP connection failed:', error.message);
-      console.error('⚠️ Please verify your Hostinger email credentials are correct');
+      console.error('⚠️ Email service will be unavailable but API will continue to work');
+      console.error('⚠️ Please check your SMTP credentials and network connectivity');
     }
   }
 
   async sendEmail({ to, subject, text, html }: EmailOptions): Promise<void> {
+    // Check if email service is available
+    if (!this.isConnected) {
+      console.warn('⚠️ Email service is not connected. Attempting to reconnect...');
+      try {
+        await this.transporter.verify();
+        this.isConnected = true;
+        console.log('✅ Reconnected to email service successfully');
+      } catch (error) {
+        console.error('❌ Failed to reconnect to email service:', error);
+        throw new Error('Email service is temporarily unavailable. Please try again later.');
+      }
+    }
+
     try {
       const mailOptions = {
         from: `"${process.env.SMTP_FROM_NAME || 'HiPro Commerce'}" <${process.env.EMAIL_FROM}>`,
@@ -79,14 +99,14 @@ class EmailService {
       console.log('  Rejected recipients:', info.rejected);
       
     } catch (error: any) {
+      this.isConnected = false; // Mark as disconnected for future attempts
       console.error('❌ Failed to send email:', error);
       console.error('Error details:', {
         code: error.code,
         errno: error.errno,
         command: error.command,
         response: error.response,
-        responseCode: error.responseCode,
-        stack: error.stack
+        responseCode: error.responseCode
       });
       
       // Provide specific error messages based on common SMTP errors
@@ -108,9 +128,9 @@ class EmailService {
           case 'EAUTH':
             throw new Error('Hostinger email authentication failed. Please verify your email credentials.');
           case 'ECONNECTION':
-            throw new Error('Cannot connect to Hostinger SMTP server. Please check your network connection.');
+          case 'ECONNREFUSED':
           case 'ETIMEDOUT':
-            throw new Error('Connection to Hostinger SMTP server timed out.');
+            throw new Error('Cannot connect to email server. Please check your network connection or try again later.');
           case 'EENVELOPE':
             throw new Error('Invalid email envelope. Please check sender and recipient addresses.');
           case 'EMESSAGE':
