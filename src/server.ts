@@ -34,38 +34,56 @@ const app = express();
 app.set('trust proxy', 1);
 
 /* -------------------------------------------------
+   Debug Middleware (Development Only)
+-------------------------------------------------- */
+if (config.NODE_ENV === 'development') {
+  app.use((req, res, next) => {
+    console.log(`🔄 ${req.method} ${req.url} from origin: ${req.headers.origin || 'unknown'}`);
+    next();
+  });
+}
+
+/* -------------------------------------------------
    CORS (ONLY ONE – PRODUCTION SAFE)
 -------------------------------------------------- */
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow non-browser tools (curl, server-to-server)
-    if (!origin) return callback(null, true);
+if (config.NODE_ENV === 'development') {
+  // Very permissive CORS for development
+  app.use(cors({
+    origin: true, // Allow all origins in development
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    optionsSuccessStatus: 204,
+  }));
+  console.log('🔓 CORS: Allowing ALL origins in development mode');
+} else {
+  // Strict CORS for production
+  app.use(cors({
+    origin: (origin, callback) => {
+      console.log('🔍 CORS Check - Origin:', origin, 'Environment:', config.NODE_ENV);
+      
+      // Allow non-browser tools (curl, server-to-server)
+      if (!origin) return callback(null, true);
 
-    const allowedOrigins = [
-      'https://shop.hiprotech.org',
-      'https://adminshop.hiprotech.org',
-    ];
+      const allowedOrigins = [
+        'https://shop.hiprotech.org',
+        'https://adminshop.hiprotech.org',
+      ];
 
-    // Allow localhost during development
-    if (config.NODE_ENV === 'development') {
-      if (
-        origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:')
-      ) {
+      if (allowedOrigins.includes(origin)) {
+        console.log('✅ CORS Allow - Production origin:', origin);
         return callback(null, true);
       }
-    }
-     if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
 
-    return callback(new Error(`CORS blocked for origin: ${origin}`));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  optionsSuccessStatus: 204,
-}));
+      console.log('❌ CORS Block - Origin not allowed:', origin);
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    optionsSuccessStatus: 204,
+  }));
+}
 
 /* -------------------------------------------------
    Security & Core Middleware
