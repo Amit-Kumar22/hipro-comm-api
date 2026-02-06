@@ -30,40 +30,23 @@ import uploadRoutes from './routes/upload.js';
 const app = express();
 
 /* -------------------------------------------------
-   Trust proxy (important for rate limit + nginx)
+   Trust proxy (nginx + rate limit)
 -------------------------------------------------- */
 app.set('trust proxy', 1);
 
 /* -------------------------------------------------
-   Debug Middleware (Development Only)
+   CORS (ONLY ONE — FIXED)
 -------------------------------------------------- */
 if (config.NODE_ENV === 'development') {
-  app.use((req, res, next) => {
-    console.log(`🔄 ${req.method} ${req.url} from origin: ${req.headers.origin || 'unknown'}`);
-    next();
-  });
-}
-
-/* -------------------------------------------------
-   CORS (ONLY ONE – PRODUCTION SAFE)
--------------------------------------------------- */
-if (config.NODE_ENV === 'development') {
-  // Very permissive CORS for development
+  console.log('🔓 CORS: Allow all origins (development)');
   app.use(cors({
-    origin: true, // Allow all origins in development
+    origin: true,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-    optionsSuccessStatus: 204,
   }));
-  console.log('🔓 CORS: Allowing ALL origins in development mode');
 } else {
-  // Strict CORS for production
+  console.log('🔒 CORS: Production mode');
   app.use(cors({
     origin: (origin, callback) => {
-      console.log('🔍 CORS Check - Origin:', origin, 'Environment:', config.NODE_ENV);
-      
-      // Allow non-browser tools (curl, server-to-server)
       if (!origin) return callback(null, true);
 
       const allowedOrigins = [
@@ -72,17 +55,14 @@ if (config.NODE_ENV === 'development') {
       ];
 
       if (allowedOrigins.includes(origin)) {
-        console.log('✅ CORS Allow - Production origin:', origin);
-        return callback(null, true);
+        return callback(null, origin); // ✅ VERY IMPORTANT
       }
 
-      console.log('❌ CORS Block - Origin not allowed:', origin);
       return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-    optionsSuccessStatus: 204,
+    allowedHeaders: ['Content-Type', 'Authorization'],
   }));
 }
 
@@ -92,18 +72,15 @@ if (config.NODE_ENV === 'development') {
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-
 app.use(compression());
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
 app.use(cookieParser());
 app.use(mongoSanitize());
 
 /* -------------------------------------------------
    Logging
-   ------------------------------------------------- */
+-------------------------------------------------- */
 if (config.NODE_ENV !== 'test') {
   app.use(morgan(config.NODE_ENV === 'production' ? 'combined' : 'dev'));
 }
@@ -116,33 +93,28 @@ const limiter = rateLimit({
   max: config.RATE_LIMIT_MAX_REQUESTS,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    error: 'Too many requests from this IP, please try again later.',
-  },
 });
 app.use(limiter);
 
 /* -------------------------------------------------
    Health Check
 -------------------------------------------------- */
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.status(200).json({
     status: 'OK',
-    environment: config.NODE_ENV,
+    env: config.NODE_ENV,
     uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
   });
 });
 
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
-  explorer: true,
-  customSiteTitle: 'HiproTech Commerce API Docs',
-}));
-
+/* -------------------------------------------------
+   Swagger
+-------------------------------------------------- */
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 app.get('/docs', (_, res) => res.redirect('/api/docs'));
 
 /* -------------------------------------------------
-   Static File Serving
+   Static Files
 -------------------------------------------------- */
 app.use('/uploads', express.static('uploads'));
 
@@ -167,6 +139,7 @@ app.use('/api/v1/upload', uploadRoutes);
 -------------------------------------------------- */
 app.use(notFound);
 app.use(errorHandler);
+
 /* -------------------------------------------------
    Server Bootstrap
 -------------------------------------------------- */
@@ -176,22 +149,9 @@ const startServer = async () => {
 
     const PORT = config.PORT;
 
-    const server = app.listen(PORT, '127.0.0.1', () => {
+    app.listen(PORT, '127.0.0.1', () => {
       console.log(`🚀 API running on http://127.0.0.1:${PORT}`);
-      console.log(`📚 Docs: http://127.0.0.1:${PORT}/api/docs`);
       console.log(`🌍 Environment: ${config.NODE_ENV}`);
-    });
-
-    server.on('error', (error: any) => {
-      if (error.code === 'EADDRINUSE') {
-        console.error(`❌ Port ${PORT} is already in use.`);
-        console.log(`💡 To free up port ${PORT}, disable AirPlay Receiver in System Preferences > Sharing`);
-        console.log(`💡 Or use: sudo lsof -ti:${PORT} | xargs kill -9`);
-        process.exit(1);
-      } else {
-        console.error('❌ Server error:', error);
-        process.exit(1);
-      }
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
@@ -208,6 +168,7 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
   process.exit(1);
 });
+
 startServer();
 
 export default app;
