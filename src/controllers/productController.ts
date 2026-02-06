@@ -20,6 +20,13 @@ const createProductSchema = z.object({
     alt: z.string().min(1, 'Alt text is required'),
     isPrimary: z.boolean().default(false)
   })).min(1, 'At least one image is required'),
+  video: z.object({
+    url: z.string().url('Invalid video URL'),
+    title: z.string().optional(),
+    duration: z.number().optional(),
+    size: z.number().optional(),
+    format: z.string().optional()
+  }).optional(),
   price: z.object({
     original: z.number().min(0, 'Original price cannot be negative'),
     selling: z.number().min(0, 'Selling price cannot be negative')
@@ -448,7 +455,12 @@ export const getProductBySlug = asyncHandler(async (req: Request, res: Response)
  *               $ref: '#/components/schemas/Error'
  */
 export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  console.log('🎬 Received product data:', req.body);
+  console.log('🎥 Video field in request:', req.body.video);
+  
   const validatedData = createProductSchema.parse(req.body);
+  console.log('✅ Validated product data:', validatedData);
+  console.log('🎥 Video field after validation:', validatedData.video);
 
   // Check if category exists
   const category = await Category.findById(validatedData.categoryId);
@@ -533,7 +545,12 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
 // Update product (Admin only)
 export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
+  console.log('🎬 Updating product with data:', req.body);
+  console.log('🎥 Video field in update request:', req.body.video);
+  
   const validatedData = updateProductSchema.parse(req.body);
+  console.log('✅ Validated update data:', validatedData);
+  console.log('🎥 Video field after validation:', validatedData.video);
 
   const product = await Product.findById(id);
   if (!product) {
