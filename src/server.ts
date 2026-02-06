@@ -13,6 +13,13 @@ import { config } from './config/env.js';
 import { connectDatabase } from './config/database.js';
 import { errorHandler, notFound } from './middleware/errorMiddleware.js';
 
+// Performance optimizations
+import { 
+  optimizeMongoose, 
+  optimizedCompression,
+  logMemoryUsage 
+} from './middleware/performance';
+
 // Routes
 import authRoutes from './routes/auth.js';
 import categoryRoutes from './routes/categories.js';
@@ -72,7 +79,12 @@ if (config.NODE_ENV === 'development') {
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-app.use(compression());
+
+// Use optimized compression instead of default
+app.use(optimizedCompression());
+
+// Add database optimization middleware
+app.use(optimizeMongoose());
 
 // Increase body parser limits for file uploads (especially videos up to 50MB)
 app.use(express.json({ limit: '60mb' }));
