@@ -163,9 +163,10 @@ CartSchema.methods.calculateTotals = function(): void {
     subtotal += item.price * item.quantity;
   });
 
-  const tax = Math.round(subtotal * 0.18 * 100) / 100; // 18% GST
-  const shipping = subtotal > 500 ? 0 : 50; // Free shipping above ₹500
-  const total = Math.round((subtotal + tax + shipping) * 100) / 100;
+  // Modified: No tax and shipping calculation - only real prices
+  const tax = 0; // No GST calculation
+  const shipping = 0; // No shipping cost
+  const total = Math.round(subtotal * 100) / 100; // Only product prices
 
   this.totals = {
     totalItems,

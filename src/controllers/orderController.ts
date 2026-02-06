@@ -114,9 +114,10 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
       discount += coupon.discount;
     }
 
-    const tax = Math.round((subtotal - discount) * 0.18 * 100) / 100; // 18% GST
-    const shipping = subtotal > 500 ? 0 : 50; // Free shipping above ₹500
-    const total = Math.round((subtotal - discount + tax + shipping) * 100) / 100;
+    // Modified: No tax and shipping calculation - only real prices
+    const tax = 0; // No GST calculation
+    const shipping = 0; // No shipping cost
+    const total = Math.round((subtotal - discount) * 100) / 100; // Only product prices
 
     // Generate order number
     const date = new Date();
@@ -199,11 +200,12 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
     order.paymentId = payment._id;
     await order.save();
 
-    // Clear cart after successful order creation
-    await Cart.findOneAndUpdate(
-      { customer: req.customer._id },
-      { $set: { items: [] } }
-    );
+    // Don't clear cart immediately - only clear after successful payment
+    // This allows users to retry payment if needed
+    console.log('📦 Order created successfully, cart preserved for payment retry:', {
+      orderId: order._id,
+      cartItems: cart.items.length
+    });
 
     res.status(201).json({
       success: true,

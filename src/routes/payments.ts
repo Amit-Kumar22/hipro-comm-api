@@ -1,37 +1,63 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { authenticateCustomer } from '../middleware/customerAuthMiddleware.js';
+import { authenticate, requireAdmin } from '../middleware/authMiddleware.js';
 import {
   initiatePayment,
   verifyPayment,
   getPaymentHistory,
   getPaymentById,
+  getPaymentStatus,
+  verifyPaymentProof,
   processRefund,
   simulatePaymentSuccess,
-  simulatePaymentFailure
+  simulatePaymentFailure,
+  adminVerifyPayment,
+  getPaymentForVerification
 } from '../controllers/paymentController.js';
+
+// Configure multer for file uploads
+const upload = multer({
+  dest: 'uploads/payment-proofs/',
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
 
 const router = Router();
 
-// All routes require customer authentication
-router.use(authenticateCustomer);
+// Initiate payment for an order (requires customer auth)
+router.post('/initiate', authenticateCustomer, initiatePayment);
 
-// Initiate payment for an order
-router.post('/initiate', initiatePayment);
+// Verify payment after gateway response (requires customer auth)
+router.post('/verify', authenticateCustomer, verifyPayment);
 
-// Verify payment after gateway response
-router.post('/verify', verifyPayment);
+// Verify payment with proof (screenshot/transaction ID) (requires customer auth)
+router.post('/verify-proof', authenticateCustomer, upload.single('paymentProof'), verifyPaymentProof);
 
-// Get payment history
-router.get('/history', getPaymentHistory);
+// Get payment history (requires customer auth)
+router.get('/history', authenticateCustomer, getPaymentHistory);
 
-// Get specific payment details
-router.get('/:paymentId', getPaymentById);
+// Get specific payment details (requires customer auth)
+router.get('/:paymentId', authenticateCustomer, getPaymentById);
 
-// Process refund
-router.post('/refund', processRefund);
+// Get payment status (simplified for polling) (requires customer auth)
+router.get('/:paymentId/status', authenticateCustomer, getPaymentStatus);
 
-// Simulation routes (for testing)
-router.post('/simulate/success', simulatePaymentSuccess);
-router.post('/simulate/failure', simulatePaymentFailure);
+// Process refund (requires customer auth)
+router.post('/refund', authenticateCustomer, processRefund);
+
+// Simulation routes (for testing) (requires customer auth)
+router.post('/simulate/success', authenticateCustomer, simulatePaymentSuccess);
+router.post('/simulate/failure', authenticateCustomer, simulatePaymentFailure);
+
+// Admin routes (require admin authentication)
+router.get('/admin/verify/:paymentId', authenticate, requireAdmin, getPaymentForVerification);
+router.post('/admin/verify', authenticate, requireAdmin, adminVerifyPayment);
 
 export default router;
