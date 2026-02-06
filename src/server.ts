@@ -25,6 +25,7 @@ import userRoutes from './routes/users.js';
 import adminRoutes from './routes/admin.js';
 import customerRoutes from './routes/customers.js';
 import profileRoutes from './routes/profile.js';
+import uploadRoutes from './routes/upload.js';
 
 const app = express();
 
@@ -141,6 +142,11 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
 app.get('/docs', (_, res) => res.redirect('/api/docs'));
 
 /* -------------------------------------------------
+   Static File Serving
+-------------------------------------------------- */
+app.use('/uploads', express.static('uploads'));
+
+/* -------------------------------------------------
    API Routes (v1)
 -------------------------------------------------- */
 app.use('/api/v1/auth', authRoutes);
@@ -154,6 +160,7 @@ app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/payments', paymentsRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/upload', uploadRoutes);
 
 /* -------------------------------------------------
    Error Handling

@@ -314,7 +314,7 @@ export const getPaymentById = asyncHandler(async (req: CustomerAuthenticatedRequ
   const { paymentId } = req.params;
 
   const payment = await Payment.findOne({ 
-    _id: paymentId, 
+    paymentId: paymentId, 
     customer: req.customer._id 
   }).populate({
     path: 'order',
@@ -344,6 +344,425 @@ export const getPaymentById = asyncHandler(async (req: CustomerAuthenticatedRequ
       createdAt: payment.createdAt,
       updatedAt: payment.updatedAt,
       order: payment.order
+    }
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/payments/{paymentId}/status:
+ *   get:
+ *     summary: Get payment status (lightweight for polling)
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const getPaymentStatus = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const { paymentId } = req.params;
+  console.log('Payment status check for:', { paymentId, customerId: req.customer._id });
+
+  const payment = await Payment.findOne({ 
+    _id: paymentId, 
+    customer: req.customer._id 
+  }).select('status gateway.transactionId updatedAt paymentId');
+
+  if (!payment) {
+    console.log('Payment not found with _id:', paymentId);
+    throw new NotFoundError('Payment not found');
+  }
+
+  console.log('Payment found:', { 
+    id: payment._id, 
+    paymentId: payment.paymentId, 
+    status: payment.status 
+  });
+
+  res.json({
+    success: true,
+    data: {
+      paymentId: payment.paymentId,
+      status: payment.status,
+      transactionId: payment.gateway?.transactionId,
+      lastUpdated: payment.updatedAt
+    }
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/payments/verify-proof:
+ *   post:
+ *     summary: Verify payment with proof (screenshot/transaction ID)
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ */
+export const verifyPaymentProof = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
+  if (!req.customer) {
+    throw new ValidationError('Customer not authenticated');
+  }
+
+  const { paymentId, orderId, amount, transactionId } = req.body;
+  const paymentProof = req.file; // For file upload
+
+  console.log('Payment proof verification request:', {
+    paymentId,
+    orderId,
+    amount,
+    transactionId,
+    hasFile: !!paymentProof,
+    customerId: req.customer._id
+  });
+
+  if (!paymentId || !orderId) {
+    throw new ValidationError('Payment ID and Order ID are required');
+  }
+
+  if (!paymentProof && !transactionId) {
+    throw new ValidationError('Please provide payment screenshot or transaction ID');
+  }
+
+  // Find the payment using _id field (MongoDB ObjectId)
+  const payment = await Payment.findOne({ 
+    _id: paymentId, 
+    customer: req.customer._id 
+  });
+
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
+  }
+
+  // Find the order
+  const order = await Order.findOne({
+    _id: orderId,
+    user: req.customer._id
+  });
+
+  if (!order) {
+    throw new NotFoundError('Order not found');
+  }
+
+  // Verify amount matches
+  console.log('Payment amount verification:', {
+    submittedAmount: amount,
+    parsedAmount: parseFloat(amount),
+    orderTotal: order.totals.total,
+    orderTotals: order.totals,
+    orderId: order._id
+  });
+
+  if (amount && parseFloat(amount) !== order.totals.total) {
+    console.error('❌ Amount mismatch:', {
+      submitted: parseFloat(amount),
+      expected: order.totals.total,
+      difference: Math.abs(parseFloat(amount) - order.totals.total)
+    });
+    throw new ValidationError(`Payment amount does not match order total. Submitted: ₹${amount}, Expected: ₹${order.totals.total}`);
+  }
+
+  // Update payment with proof data
+  const proofData: any = {
+    submittedAt: new Date(),
+    customerSubmitted: true,
+    status: 'UNDER_REVIEW'
+  };
+
+  if (transactionId) {
+    proofData.transactionId = transactionId;
+    // Simple transaction ID validation
+    if (transactionId.length < 8) {
+      throw new ValidationError('Please enter a valid transaction ID');
+    }
+  }
+
+  if (paymentProof) {
+    // In production, upload to cloud storage (AWS S3, Cloudinary, etc.)
+    proofData.screenshotPath = paymentProof.filename;
+  }
+
+  // Update payment with proof
+  // Auto-approve for development if transaction ID is provided
+  const shouldAutoApprove = process.env.NODE_ENV === 'development' && transactionId && transactionId.length >= 8;
+  
+  if (shouldAutoApprove) {
+    payment.status = 'SUCCESS';
+    order.paymentStatus = 'PAID';
+    order.status = 'PAID';
+    
+    order.statusHistory.push({
+      status: 'PAID',
+      timestamp: new Date(),
+      note: `Payment verified automatically with transaction ID: ${transactionId}`
+    });
+    
+    console.log('✅ Payment auto-approved for development:', {
+      paymentId: payment._id,
+      transactionId,
+      amount: order.totals.total
+    });
+  } else {
+    payment.status = 'PENDING'; // Keep as pending while under review
+    order.paymentStatus = 'PENDING';
+    
+    order.statusHistory.push({
+      status: 'PENDING',
+      timestamp: new Date(),
+      note: `Payment proof submitted${transactionId ? ` with transaction ID: ${transactionId}` : ''}. Verification in progress.`
+    });
+  }
+  
+  payment.gateway.transactionId = transactionId || payment.gateway.transactionId;
+  // Store proof data in metadata (extend interface if needed)
+  (payment.metadata as any).proofSubmitted = proofData;
+  await payment.save();
+
+  // Update order status  
+  await order.save();
+
+  // Clear cart if payment was approved
+  if (shouldAutoApprove) {
+    const { Cart } = await import('../models');
+    await Cart.findOneAndUpdate(
+      { customer: req.customer._id },
+      { $set: { items: [] } }
+    );
+    console.log('🛒 Cart cleared after successful payment verification');
+  }
+
+  res.json({
+    success: true,
+    message: shouldAutoApprove 
+      ? 'Payment verified and approved successfully!' 
+      : 'Payment proof submitted successfully. We will verify and update your order status within 5-10 minutes.',
+    data: {
+      paymentId: payment._id,
+      status: shouldAutoApprove ? 'SUCCESS' : 'PENDING',
+      message: shouldAutoApprove ? 'Payment completed successfully' : 'Verification in progress'
+    }
+  });
+});
+
+/**
+ * Admin function to approve payment after verification
+ * This would be called by admin after manually verifying the screenshot/transaction
+ */
+export const adminApprovePayment = asyncHandler(async (req: any, res: Response) => {
+  const { paymentId, approved } = req.body;
+
+  if (!paymentId) {
+    throw new ValidationError('Payment ID is required');
+  }
+
+  const payment = await Payment.findOne({ paymentId: paymentId });
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
+  }
+
+  const order = await Order.findOne({ _id: payment.order });
+  if (!order) {
+    throw new NotFoundError('Order not found');
+  }
+
+  if (approved) {
+    // Approve payment
+    payment.status = 'SUCCESS';
+    await payment.save();
+
+    // Update order
+    order.status = 'PAID';
+    order.paymentStatus = 'PAID';
+    order.statusHistory.push({
+      status: 'PAID',
+      timestamp: new Date(),
+      note: 'Payment verified and approved by admin'
+    });
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Payment approved successfully',
+      data: { paymentId, status: 'SUCCESS' }
+    });
+  } else {
+    // Reject payment
+    payment.status = 'FAILED';
+    await payment.save();
+
+    order.status = 'CANCELLED';
+    order.paymentStatus = 'FAILED';
+    order.statusHistory.push({
+      status: 'CANCELLED',
+      timestamp: new Date(),
+      note: 'Payment rejected by admin - verification failed'
+    });
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Payment rejected',
+      data: { paymentId, status: 'FAILED' }
+    });
+  }
+});
+
+/**
+ * Admin function to verify payment proof and approve/reject with message
+ */
+export const adminVerifyPayment = asyncHandler(async (req: any, res: Response) => {
+  const { paymentId, action, message } = req.body;
+
+  if (!paymentId || !action) {
+    throw new ValidationError('Payment ID and action are required');
+  }
+
+  if (!['approve', 'reject'].includes(action)) {
+    throw new ValidationError('Action must be either "approve" or "reject"');
+  }
+
+  // Find payment by MongoDB ObjectId
+  const payment = await Payment.findById(paymentId);
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
+  }
+
+  // Find associated order
+  const order = await Order.findById(payment.order).populate('user', 'name email');
+  if (!order) {
+    throw new NotFoundError('Order not found');
+  }
+
+  const adminMessage = message || (action === 'approve' 
+    ? 'Payment verified and approved by admin' 
+    : 'Payment verification failed');
+
+  if (action === 'approve') {
+    // Approve payment
+    payment.status = 'SUCCESS';
+    order.status = 'PAID';
+    order.paymentStatus = 'PAID';
+    
+    order.statusHistory.push({
+      status: 'PAID',
+      timestamp: new Date(),
+      note: adminMessage
+    });
+
+    // Clear customer's cart when payment is approved
+    const { Cart } = await import('../models');
+    await Cart.findOneAndUpdate(
+      { customer: order.user },
+      { $set: { items: [] } }
+    );
+
+    console.log('✅ Admin approved payment:', {
+      paymentId: payment._id,
+      orderId: order._id,
+      amount: payment.amount,
+      adminMessage
+    });
+
+    await payment.save();
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Payment approved successfully',
+      data: { 
+        paymentId: payment._id, 
+        status: 'SUCCESS',
+        orderStatus: 'PAID',
+        customerMessage: adminMessage
+      }
+    });
+
+  } else {
+    // Reject payment
+    payment.status = 'FAILED';
+    order.status = 'CANCELLED';
+    order.paymentStatus = 'FAILED';
+    
+    order.statusHistory.push({
+      status: 'CANCELLED',
+      timestamp: new Date(),
+      note: adminMessage
+    });
+
+    console.log('❌ Admin rejected payment:', {
+      paymentId: payment._id,
+      orderId: order._id,
+      reason: adminMessage
+    });
+
+    await payment.save();
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Payment rejected and order cancelled',
+      data: { 
+        paymentId: payment._id, 
+        status: 'FAILED',
+        orderStatus: 'CANCELLED',
+        customerMessage: adminMessage
+      }
+    });
+  }
+});
+
+/**
+ * Get payment details with proof for admin verification
+ */
+export const getPaymentForVerification = asyncHandler(async (req: any, res: Response) => {
+  const { paymentId } = req.params;
+
+  if (!paymentId) {
+    throw new ValidationError('Payment ID is required');
+  }
+
+  // Find payment by MongoDB ObjectId
+  const payment = await Payment.findById(paymentId);
+  if (!payment) {
+    throw new NotFoundError('Payment not found');
+  }
+
+  // Find associated order with customer details
+  const order = await Order.findById(payment.order)
+    .populate('user', 'name email phone')
+    .select('orderNumber totals items status paymentStatus statusHistory createdAt');
+
+  if (!order) {
+    throw new NotFoundError('Order not found');
+  }
+
+  res.json({
+    success: true,
+    data: {
+      payment: {
+        _id: payment._id,
+        paymentId: payment.paymentId,
+        amount: payment.amount,
+        currency: payment.currency,
+        method: payment.method,
+        status: payment.status,
+        gateway: payment.gateway,
+        metadata: payment.metadata,
+        createdAt: payment.createdAt,
+        updatedAt: payment.updatedAt
+      },
+      order: {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        totals: order.totals,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        customer: order.user,
+        createdAt: order.createdAt,
+        statusHistory: order.statusHistory
+      }
     }
   });
 });
