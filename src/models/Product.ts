@@ -14,6 +14,13 @@ export interface IProduct extends Document {
     alt: string;
     isPrimary: boolean;
   }[];
+  video?: {
+    url: string;
+    title?: string;
+    duration?: number;
+    size?: number;
+    format?: string;
+  };
   price: {
     original: number;
     selling: number;
@@ -117,6 +124,28 @@ const ProductSchema = new Schema<IProduct>({
       default: false
     }
   }],
+  video: {
+    url: {
+      type: String,
+      required: false
+    },
+    title: {
+      type: String,
+      required: false
+    },
+    duration: {
+      type: Number,
+      required: false
+    },
+    size: {
+      type: Number,
+      required: false
+    },
+    format: {
+      type: String,
+      required: false
+    }
+  },
   price: {
     original: {
       type: Number,

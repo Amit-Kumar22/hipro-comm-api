@@ -1,6 +1,6 @@
 # HiPro Commerce API Documentation
 
-**Base URL:** `http://localhost:8080/api/v1`
+**Base URL:** `http://localhost:5000/api/v1`
 **Production URL:** `https://your-domain.com/api/v1`
 
 ---
@@ -1209,5 +1209,5 @@ Get system information and server stats
 
 **Last Updated:** December 29, 2025  
 **API Version:** v1  
-**Server Port:** 8080  
+**Server Port:** 5000  
 **Database:** hipro-comm-db
