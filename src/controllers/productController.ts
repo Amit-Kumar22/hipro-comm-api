@@ -12,8 +12,8 @@ import { calculatePagination, generateSlug, generateSKU } from '../utils/helpers
 // Validation schema for creating products
 const createProductSchema = z.object({
   name: z.string().min(2, 'Product name must be at least 2 characters').max(200),
-  description: z.string().min(10, 'Description must be at least 10 characters').max(2000),
-  shortDescription: z.string().min(10, 'Short description must be at least 10 characters').max(300),
+  description: z.string().min(10, 'Description must be at least 10 characters'), // Removed max limit
+  shortDescription: z.string().min(10, 'Short description must be at least 10 characters'), // Removed max limit
   categoryId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid category ID'),
   images: z.array(z.object({
     url: z.string().url('Invalid image URL'),
@@ -59,6 +59,11 @@ const createProductSchema = z.object({
     metaDescription: z.string().max(160).optional(),
     metaKeywords: z.array(z.string()).optional()
   }).optional(),
+  returnPolicy: z.string().optional(),
+  whatsInTheBox: z.array(z.object({
+    component: z.string().min(1, 'Component name is required'),
+    quantity: z.number().min(1, 'Quantity must be at least 1')
+  })).optional(),
   // Inventory data
   initialStock: z.number().min(0, 'Initial stock cannot be negative').default(0),
   reorderLevel: z.number().min(0, 'Reorder level cannot be negative').default(10),
