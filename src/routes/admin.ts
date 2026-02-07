@@ -11,6 +11,13 @@ import {
   getOrderStats,
   updateOrderStatus
 } from '../controllers/adminController';
+import {
+  getAllPaymentVerifications,
+  getPaymentVerificationById,
+  approvePaymentVerification,
+  rejectPaymentVerification,
+  getPaymentVerificationStats
+} from '../controllers/adminPaymentVerificationController';
 import { authenticate, requireAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -32,6 +39,13 @@ router.delete('/users/:id', deleteUser);
 router.get('/orders', getAllOrders);
 router.get('/orders/stats', getOrderStats);
 router.put('/orders/:orderId/status', updateOrderStatus);
+
+// Payment Verification Management
+router.get('/payment-verifications', getAllPaymentVerifications);
+router.get('/payment-verifications/stats', getPaymentVerificationStats);
+router.get('/payment-verifications/:verificationId', getPaymentVerificationById);
+router.post('/payment-verifications/:verificationId/approve', approvePaymentVerification);
+router.post('/payment-verifications/:verificationId/reject', rejectPaymentVerification);
 
 // System
 router.get('/system', getSystemInfo);

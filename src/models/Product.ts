@@ -65,6 +65,11 @@ export interface IProduct extends Document {
     average: number;
     count: number;
   };
+  returnPolicy?: string;
+  whatsInTheBox?: {
+    component: string;
+    quantity: number;
+  }[];
   createdAt: Date;
   updatedAt: Date;
   // Methods
@@ -90,13 +95,13 @@ const ProductSchema = new Schema<IProduct>({
   },
   description: {
     type: String,
-    required: [true, 'Product description is required'],
-    maxLength: [2000, 'Description cannot exceed 2000 characters']
+    required: [true, 'Product description is required']
+    // Removed maxLength limit to allow unlimited text
   },
   shortDescription: {
     type: String,
-    required: [true, 'Short description is required'],
-    maxLength: [300, 'Short description cannot exceed 300 characters']
+    required: [true, 'Short description is required']
+    // Removed maxLength limit to allow unlimited text
   },
   sku: {
     type: String,
@@ -296,7 +301,23 @@ const ProductSchema = new Schema<IProduct>({
       default: 0,
       min: 0
     }
-  }
+  },
+  returnPolicy: {
+    type: String,
+    trim: true
+  },
+  whatsInTheBox: [{
+    component: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1
+    }
+  }]
 }, {
   timestamps: true
 });
