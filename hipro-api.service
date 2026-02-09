@@ -20,13 +20,24 @@ Environment=JWT_SECRET=your-production-jwt-secret-change-this
 Environment=JWT_EXPIRES_IN=7d
 Environment=COOKIE_SECRET=your-production-cookie-secret-change-this
 Environment=FRONTEND_URL=https://shop.hiprotech.org
+Environment=ADMIN_URL=https://adminshop.hiprotech.org
 Environment=RATE_LIMIT_WINDOW_MS=900000
 Environment=RATE_LIMIT_MAX_REQUESTS=100
+Environment=UPLOAD_PATH=uploads
+Environment=MAX_FILE_SIZE=10485760
+Environment=ALLOWED_FILE_TYPES=image/jpeg,image/png,image/webp,image/gif
+Environment=LOG_LEVEL=info
+Environment=EMAIL_SERVICE=smtp
+Environment=EMAIL_USER=info@hiprotech.org
+Environment=EMAIL_PASS=REMOVED_SMTP_PASS
+Environment=EMAIL_FROM=info@hiprotech.org
 Environment=SMTP_HOST=smtp.hostinger.com
 Environment=SMTP_PORT=587
+Environment=SMTP_SECURE=false
 Environment=SMTP_USER=info@hiprotech.org
 Environment=SMTP_PASS=REMOVED_SMTP_PASS
 Environment=SMTP_FROM_NAME=HiPro Commerce
+Environment=SMTP_FROM_EMAIL=info@hiprotech.org
 
 [Install]
 WantedBy=multi-user.target
