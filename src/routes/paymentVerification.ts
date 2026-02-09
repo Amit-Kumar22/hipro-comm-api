@@ -24,8 +24,27 @@ router.get('/debug-auth', optionalCustomerAuth, (req: any, res) => {
 // Using optional auth so payment verification works even if session expires
 router.post(
   '/verify',
+  (req, res, next) => {
+    console.log('🔄 Payment verification route accessed');
+    console.log('Request headers:', {
+      contentType: req.headers['content-type'],
+      contentLength: req.headers['content-length'],
+      userAgent: req.headers['user-agent']
+    });
+    next();
+  },
   optionalCustomerAuth,
+  (req, res, next) => {
+    const customerReq = req as any;
+    console.log('🔐 Auth middleware passed, user:', customerReq.customer?.email || 'anonymous');
+    next();
+  },
   uploadPaymentProof,
+  (req, res, next) => {
+    const fileReq = req as any;
+    console.log('📁 File upload middleware passed, file:', fileReq.file ? fileReq.file.filename : 'no file');
+    next();
+  },
   verifyPayment
 );
 
