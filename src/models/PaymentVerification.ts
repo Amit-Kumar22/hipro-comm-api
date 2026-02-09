@@ -4,12 +4,24 @@ export interface IPaymentVerification extends Document {
   orderId?: string | null;
   transactionId: string;
   amount: number;
-  screenshotPath: string;
-  screenshotFilename: string;
+  paymentMethod: 'bank_transfer' | 'upi' | 'online';
+  screenshot: {
+    data: Buffer;
+    contentType: string;
+    filename: string;
+    size: number;
+  };
+  customerInfo?: {
+    email: string;
+    name: string;
+    phone?: string;
+  };
   verificationStatus: 'pending' | 'verified' | 'rejected';
   verifiedAt?: Date;
   verifiedBy?: string;
   rejectionReason?: string;
+  orderCancelledDueToFraud?: boolean;
+  adminNotes?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,13 +44,42 @@ const paymentVerificationSchema: Schema = new Schema({
     required: true,
     min: 0
   },
-  screenshotPath: {
+  paymentMethod: {
     type: String,
+    enum: ['bank_transfer', 'upi', 'online'],
     required: true
   },
-  screenshotFilename: {
-    type: String,
-    required: true
+  screenshot: {
+    data: {
+      type: Buffer,
+      required: true
+    },
+    contentType: {
+      type: String,
+      required: true
+    },
+    filename: {
+      type: String,
+      required: true
+    },
+    size: {
+      type: Number,
+      required: true
+    }
+  },
+  customerInfo: {
+    email: {
+      type: String,
+      required: false
+    },
+    name: {
+      type: String,
+      required: false
+    },
+    phone: {
+      type: String,
+      required: false
+    }
   },
   verificationStatus: {
     type: String,
@@ -57,6 +98,14 @@ const paymentVerificationSchema: Schema = new Schema({
   rejectionReason: {
     type: String,
     default: null
+  },
+  orderCancelledDueToFraud: {
+    type: Boolean,
+    default: false
+  },
+  adminNotes: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true
@@ -65,10 +114,11 @@ const paymentVerificationSchema: Schema = new Schema({
 // Indexes for better query performance
 paymentVerificationSchema.index({ orderId: 1, verificationStatus: 1 });
 paymentVerificationSchema.index({ createdAt: -1 });
+paymentVerificationSchema.index({ 'customerInfo.email': 1 });
 
 // Static method to find pending verifications
 paymentVerificationSchema.statics.findPending = function() {
-  return this.find({ verificationStatus: 'pending' });
+  return this.find({ verificationStatus: 'pending' }).sort({ createdAt: -1 });
 };
 
 // Static method to verify payment
@@ -76,7 +126,8 @@ paymentVerificationSchema.statics.verifyPayment = function(
   orderId: string, 
   verifiedBy: string, 
   approved: boolean = true,
-  rejectionReason?: string
+  rejectionReason?: string,
+  adminNotes?: string
 ) {
   const updateData: any = {
     verificationStatus: approved ? 'verified' : 'rejected',
@@ -88,11 +139,23 @@ paymentVerificationSchema.statics.verifyPayment = function(
     updateData.rejectionReason = rejectionReason;
   }
 
+  if (adminNotes) {
+    updateData.adminNotes = adminNotes;
+  }
+
   return this.findOneAndUpdate(
     { orderId, verificationStatus: 'pending' },
     updateData,
     { new: true }
   );
+};
+
+// Method to get screenshot as base64
+paymentVerificationSchema.methods.getScreenshotBase64 = function() {
+  if (this.screenshot && this.screenshot.data) {
+    return `data:${this.screenshot.contentType};base64,${this.screenshot.data.toString('base64')}`;
+  }
+  return null;
 };
 
 export default mongoose.model<IPaymentVerification>('PaymentVerification', paymentVerificationSchema);

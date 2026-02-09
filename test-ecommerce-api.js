@@ -7,7 +7,7 @@
 
 const axios = require('axios');
 
-const API_BASE = 'http://localhost:5000/api/v1';
+const API_BASE = 'http://localhost:5001/api/v1';
 const testData = {
   customer: {
     name: 'Test Customer',
