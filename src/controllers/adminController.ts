@@ -8,6 +8,13 @@ import {
   NotFoundError 
 } from '../middleware/errorMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
+import { 
+  parseStandardizedQuery,
+  buildSortObject,
+  buildSearchFilter,
+  createStandardizedResponse,
+  calculatePagination
+} from '../utils/helpers';
 
 // Admin Dashboard Statistics
 export const getDashboardStats = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -78,56 +85,46 @@ export const getDashboardStats = asyncHandler(async (req: AuthenticatedRequest, 
 
 // Get All Users (Admin only)
 export const getAllUsers = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { 
-    page = 1, 
-    limit = 20, 
-    search = '', 
-    role = '', 
-    sortBy = 'createdAt', 
-    sortOrder = 'desc' 
-  } = req.query;
+  // Parse standardized query parameters
+  const { page, size, sortBy, sortOrder, search } = parseStandardizedQuery(req.query);
+  
+  // Extract user-specific filters
+  const { role = '' } = req.query;
 
   // Build filter
   const filter: Record<string, unknown> = {};
   
-  if (search) {
-    filter.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } }
-    ];
+  // Search filter
+  if (search && search.trim()) {
+    const searchFilter = buildSearchFilter(search, ['name', 'email', 'phone']);
+    Object.assign(filter, searchFilter);
   }
   
+  // Role filter
   if (role && role !== 'all') {
     filter.role = role;
   }
 
-  // Calculate pagination
-  const skip = (Number(page) - 1) * Number(limit);
-  const totalCount = await User.countDocuments(filter);
-  const totalPages = Math.ceil(totalCount / Number(limit));
+  // Count total elements
+  const totalElements = await User.countDocuments(filter);
+  const pagination = calculatePagination(page, size, totalElements);
 
-  // Build sort
-  const sort: Record<string, 1 | -1> = {};
-  sort[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
+  // Build sort object
+  const sort = buildSortObject(sortBy, sortOrder);
 
-  // Get users
-  const users = await User.find(filter, '-password')
+  // Query users with pagination
+  const users = await User.find(filter)
+    .select('-password -refreshToken') // Exclude sensitive fields
     .sort(sort)
-    .skip(skip)
-    .limit(Number(limit));
+    .skip(pagination.skip)
+    .limit(pagination.size);
+
+  // Create standardized response
+  const response = createStandardizedResponse(users, pagination);
 
   res.json({
     success: true,
-    data: {
-      users,
-      pagination: {
-        currentPage: Number(page),
-        totalPages,
-        totalCount,
-        hasNextPage: Number(page) < totalPages,
-        hasPrevPage: Number(page) > 1
-      }
-    }
+    ...response
   });
 });
 

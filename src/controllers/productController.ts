@@ -7,7 +7,15 @@ import {
   NotFoundError 
 } from '../middleware/errorMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
-import { calculatePagination, generateSlug, generateSKU } from '../utils/helpers.js';
+import { 
+  calculatePagination, 
+  generateSlug, 
+  generateSKU,
+  parseStandardizedQuery,
+  buildSortObject,
+  buildSearchFilter,
+  createStandardizedResponse
+} from '../utils/helpers.js';
 
 // Validation schema for creating products
 const createProductSchema = z.object({
@@ -90,7 +98,7 @@ const updateProductSchema = createProductSchema.partial().extend({
  *           default: 1
  *         description: Page number for pagination
  *       - in: query
- *         name: limit
+ *         name: size
  *         schema:
  *           type: integer
  *           default: 10
@@ -112,7 +120,7 @@ const updateProductSchema = createProductSchema.partial().extend({
  *         name: search
  *         schema:
  *           type: string
- *         description: Search query for product names
+ *         description: Search query for product names, descriptions, or SKUs
  *       - in: query
  *         name: category
  *         schema:
@@ -140,6 +148,12 @@ const updateProductSchema = createProductSchema.partial().extend({
  *         schema:
  *           type: boolean
  *         description: Filter products in stock only
+ *       - in: query
+ *         name: isActive
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Filter by product status
  *     responses:
  *       200:
  *         description: Products retrieved successfully
@@ -155,16 +169,16 @@ const updateProductSchema = createProductSchema.partial().extend({
  *                   type: array
  *                   items:
  *                     $ref: '#/components/schemas/Product'
- *                 pagination:
+ *                 pageable:
  *                   type: object
  *                   properties:
  *                     page:
  *                       type: integer
- *                     limit:
+ *                     size:
  *                       type: integer
  *                     totalPages:
  *                       type: integer
- *                     totalCount:
+ *                     totalElements:
  *                       type: integer
  *       500:
  *         description: Internal server error
@@ -174,53 +188,64 @@ const updateProductSchema = createProductSchema.partial().extend({
  *               $ref: '#/components/schemas/Error'
  */
 export const getProducts = asyncHandler(async (req: Request, res: Response) => {
+  // Parse standardized query parameters
+  const { page, size, sortBy, sortOrder, search } = parseStandardizedQuery(req.query);
+  
+  // Extract additional filters
   const {
-    page = 1,
-    limit = 10,
-    sortBy = 'createdAt',
-    sortOrder = 'desc',
-    search = '',
     category = '',
     minPrice = 0,
     maxPrice = 999999,
     featured,
-    inStock
+    inStock,
+    isActive = true
   } = req.query;
 
-  // Build filter query
-  const filter: any = { isActive: true };
+  // Build base filter
+  const filter: any = {};
   
-  if (search) {
-    filter.$text = { $search: search };
+  // Active status filter (default to true for public API)
+  if (isActive !== undefined) {
+    filter.isActive = isActive === 'true' || isActive === true;
+  } else {
+    filter.isActive = true; // Default behavior
   }
   
+  // Search filter
+  if (search && search.trim()) {
+    const searchFilter = buildSearchFilter(search, ['name', 'description', 'shortDescription', 'sku']);
+    Object.assign(filter, searchFilter);
+  }
+  
+  // Category filter
   if (category) {
     filter.category = category;
   }
   
+  // Featured filter
   if (featured === 'true') {
     filter.isFeatured = true;
   }
   
+  // Price range filter
   filter['price.selling'] = { 
     $gte: Number(minPrice), 
     $lte: Number(maxPrice) 
   };
 
-  // Count total documents
-  const totalCount = await Product.countDocuments(filter);
-  const pagination = calculatePagination(Number(page), Number(limit), totalCount);
+  // Count total documents matching filter
+  const totalElements = await Product.countDocuments(filter);
+  const pagination = calculatePagination(page, size, totalElements);
 
   // Build sort object
-  const sort: any = {};
-  sort[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
+  const sort = buildSortObject(sortBy, sortOrder);
 
-  // Query products
+  // Query products with pagination
   const products = await Product.find(filter)
     .populate('category', 'name slug')
     .sort(sort)
     .skip(pagination.skip)
-    .limit(pagination.limit);
+    .limit(pagination.size);
 
   // Get inventory data for all products
   const productIds = products.map(p => p._id);
@@ -255,23 +280,20 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
     };
   });
 
-  // Apply stock filter if needed
-  let filteredProducts = productsWithInventory;
+  // Apply stock filter if needed (after inventory merge)
+  let finalProducts = productsWithInventory;
   if (inStock === 'true') {
-    filteredProducts = productsWithInventory.filter(product => 
+    finalProducts = productsWithInventory.filter(product => 
       product.inventory.availableForSale > 0
     );
   }
 
+  // Create standardized response
+  const response = createStandardizedResponse(finalProducts, pagination);
+
   res.json({
     success: true,
-    data: {
-      products: filteredProducts,
-      pagination: {
-        ...pagination,
-        totalCount: inStock === 'true' ? filteredProducts.length : totalCount
-      }
-    }
+    ...response
   });
 });
 
@@ -712,34 +734,42 @@ export const getFeaturedProducts = asyncHandler(async (req: Request, res: Respon
 // Get products by category
 export const getProductsByCategory = asyncHandler(async (req: Request, res: Response) => {
   const { categoryId } = req.params;
-  const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+  
+  // Parse standardized query parameters
+  const { page, size, sortBy, sortOrder, search } = parseStandardizedQuery(req.query);
 
   const category = await Category.findById(categoryId);
   if (!category) {
     throw new NotFoundError('Category not found');
   }
 
-  const filter = { category: categoryId, isActive: true };
-  const totalCount = await Product.countDocuments(filter);
-  const pagination = calculatePagination(Number(page), Number(limit), totalCount);
+  // Build filter
+  const filter: any = { category: categoryId, isActive: true };
+  
+  // Add search filter if provided
+  if (search && search.trim()) {
+    const searchFilter = buildSearchFilter(search, ['name', 'description', 'shortDescription', 'sku']);
+    Object.assign(filter, searchFilter);
+  }
 
-  const sort: any = {};
-  sort[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
+  const totalElements = await Product.countDocuments(filter);
+  const pagination = calculatePagination(page, size, totalElements);
+
+  const sort = buildSortObject(sortBy, sortOrder);
 
   const products = await Product.find(filter)
     .populate('category', 'name slug')
     .sort(sort)
     .skip(pagination.skip)
-    .limit(pagination.limit);
+    .limit(pagination.size);
+
+  // Create standardized response
+  const response = createStandardizedResponse(products, pagination);
 
   res.json({
     success: true,
-    data: {
-      products,
-      pagination: {
-        ...pagination,
-        totalCount
-      },
+    ...response,
+    meta: {
       category
     }
   });
