@@ -161,6 +161,28 @@ app.use(errorHandler);
 -------------------------------------------------- */
 const startServer = async () => {
   try {
+    // Setup required directories
+    const path = require('path');
+    const fs = require('fs/promises');
+    
+    const directories = [
+      path.join(__dirname, '../uploads'),
+      path.join(__dirname, '../uploads/payment-proofs'),
+      path.join(__dirname, '../uploads/products'),
+      path.join(__dirname, '../uploads/categories'),
+      path.join(__dirname, '../uploads/profiles')
+    ];
+
+    console.log('🏗️  Setting up required directories...');
+    for (const dir of directories) {
+      try {
+        await fs.mkdir(dir, { recursive: true });
+        console.log(`✅ Directory ensured: ${dir}`);
+      } catch (error: any) {
+        console.warn(`⚠️  Directory setup warning for ${dir}:`, error?.message || error);
+      }
+    }
+
     await connectDatabase();
 
     const PORT = config.PORT;
