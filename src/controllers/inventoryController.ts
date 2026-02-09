@@ -7,7 +7,7 @@ import {
   NotFoundError 
 } from '../middleware/errorMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
-import { calculatePagination } from '../utils/helpers.js';
+import { calculatePagination, PaginationResult } from '../utils/helpers.js';
 
 // Validation schema for inventory operations
 const updateInventorySchema = z.object({
@@ -108,7 +108,7 @@ export const getInventory = asyncHandler(async (req: Request, res: Response) => 
     .populate('product', 'name slug sku price images')
     .sort(sort)
     .skip(pagination.skip)
-    .limit(pagination.limit);
+    .limit(pagination.size);
 
   // Apply stock filters after population to use virtual fields
   if (lowStock === 'true') {

@@ -7,7 +7,14 @@ import {
   NotFoundError 
 } from '../middleware/errorMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
-import { generateSlug } from '../utils/helpers';
+import { 
+  generateSlug, 
+  parseStandardizedQuery,
+  buildSortObject,
+  buildSearchFilter,
+  createStandardizedResponse,
+  calculatePagination
+} from '../utils/helpers';
 
 // Validation schema for category
 const categorySchema = z.object({
@@ -29,9 +36,39 @@ const updateCategorySchema = categorySchema.partial();
  * @swagger
  * /api/v1/categories:
  *   get:
- *     summary: Get all categories
+ *     summary: Get all categories with pagination and search
  *     tags: [Categories]
  *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: size
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *         description: Number of categories per page
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           default: "sortOrder"
+ *         description: Field to sort by
+ *       - in: query
+ *         name: sortOrder
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: "asc"
+ *         description: Sort order
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search categories by name or description
  *       - in: query
  *         name: includeInactive
  *         schema:
@@ -44,6 +81,11 @@ const updateCategorySchema = categorySchema.partial();
  *           type: boolean
  *           default: false
  *         description: Return only parent categories (no children)
+ *       - in: query
+ *         name: parentCategory
+ *         schema:
+ *           type: string
+ *         description: Filter by parent category ID
  *     responses:
  *       200:
  *         description: Categories retrieved successfully
@@ -59,6 +101,17 @@ const updateCategorySchema = categorySchema.partial();
  *                   type: array
  *                   items:
  *                     $ref: '#/components/schemas/Category'
+ *                 pageable:
+ *                   type: object
+ *                   properties:
+ *                     page:
+ *                       type: integer
+ *                     size:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ *                     totalElements:
+ *                       type: integer
  *       500:
  *         description: Internal server error
  *         content:
@@ -67,24 +120,66 @@ const updateCategorySchema = categorySchema.partial();
  *               $ref: '#/components/schemas/Error'
  */
 export const getCategories = asyncHandler(async (req: Request, res: Response) => {
-  const { includeInactive = false, parentOnly = false } = req.query;
+  // Parse standardized query parameters
+  const { page, size, sortBy, sortOrder, search } = parseStandardizedQuery(req.query);
+  
+  // Extract category-specific filters
+  const { 
+    includeInactive = false, 
+    parentOnly = false,
+    parentCategory
+  } = req.query;
 
+  // Build base filter
   const filter: any = {};
+  
+  // Active status filter
   if (!includeInactive || includeInactive === 'false') {
     filter.isActive = true;
   }
+  
+  // Parent-only filter
   if (parentOnly === 'true') {
     filter.parent = null;
   }
+  
+  // Parent category filter
+  if (parentCategory) {
+    filter.parent = parentCategory;
+  }
+  
+  // Search filter
+  if (search && search.trim()) {
+    const searchFilter = buildSearchFilter(search, ['name', 'description']);
+    Object.assign(filter, searchFilter);
+  }
 
+  // Count total elements
+  const totalElements = await Category.countDocuments(filter);
+  const pagination = calculatePagination(page, size, totalElements);
+
+  // Build sort object (default to sortOrder then name)
+  const sort = buildSortObject(sortBy === 'createdAt' ? 'sortOrder' : sortBy, sortOrder);
+  
+  // Add secondary sort by name for consistency
+  if (sortBy !== 'name') {
+    sort.name = 1;
+  }
+
+  // Query categories with pagination
   const categories = await Category.find(filter)
     .populate('parent', 'name slug')
     .populate('children', 'name slug isActive')
-    .sort({ sortOrder: 1, name: 1 });
+    .sort(sort)
+    .skip(pagination.skip)
+    .limit(pagination.size);
+
+  // Create standardized response
+  const response = createStandardizedResponse(categories, pagination);
 
   res.json({
     success: true,
-    data: categories
+    ...response
   });
 });
 
