@@ -20,6 +20,17 @@ import {
   logMemoryUsage 
 } from './middleware/performance';
 
+// Production optimizations
+import {
+  optimizeProductionDatabase,
+  productionCache,
+  ProductionQueryOptimizer,
+  productionCompression,
+  optimizeApiResponse,
+  createProductionIndexes,
+  ProductionMonitor
+} from './utils/productionOptimization';
+
 // Routes
 import authRoutes from './routes/auth.js';
 import categoryRoutes from './routes/categories.js';
@@ -81,8 +92,15 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
-// Use optimized compression instead of default
-app.use(optimizedCompression());
+// Use production optimized compression for better performance
+if (config.NODE_ENV === 'production') {
+  app.use(productionCompression);
+} else {
+  app.use(optimizedCompression());
+}
+
+// Add production API response optimization
+app.use(optimizeApiResponse());
 
 // Add database optimization middleware
 app.use(optimizeMongoose());
@@ -173,23 +191,48 @@ const startServer = async () => {
       path.join(__dirname, '../uploads/profiles')
     ];
 
-    console.log('🏗️  Setting up required directories...');
+    // Setup directories silently
     for (const dir of directories) {
       try {
         await fs.mkdir(dir, { recursive: true });
-        console.log(`✅ Directory ensured: ${dir}`);
       } catch (error: any) {
-        console.warn(`⚠️  Directory setup warning for ${dir}:`, error?.message || error);
+        // Silent fail - directories will be created when needed
       }
     }
 
-    await connectDatabase();
+    // Connect to database
+    if (config.NODE_ENV === 'production') {
+      // Use production optimized database connection
+      await optimizeProductionDatabase();
+    } else {
+      await connectDatabase();
+    }
 
     const PORT = config.PORT;
 
-    app.listen(PORT, '127.0.0.1', () => {
+    app.listen(PORT, '127.0.0.1', async () => {
       console.log(`🚀 API running on http://127.0.0.1:${PORT}`);
       console.log(`🌍 Environment: ${config.NODE_ENV}`);
+      
+      // Production-specific optimizations
+      if (config.NODE_ENV === 'production') {
+        console.log('🔥 Initializing production optimizations...');
+        
+        // Create database indexes for better query performance
+        setTimeout(async () => {
+          await createProductionIndexes();
+          console.log('✅ Production database indexes ready');
+        }, 5000); // Wait 5 seconds for full startup
+        
+        // Start performance monitoring
+        ProductionMonitor.startMonitoring();
+        console.log('📊 Performance monitoring started');
+        
+        // Log initial performance stats
+        setTimeout(() => {
+          ProductionMonitor.logPerformanceStats();
+        }, 10000); // After 10 seconds
+      }
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
