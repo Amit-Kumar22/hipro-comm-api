@@ -9,6 +9,13 @@ import {
   AppError 
 } from '../middleware/errorMiddleware';
 import { CustomerAuthenticatedRequest } from '../middleware/customerAuthMiddleware';
+import {
+  parseStandardizedQuery,
+  buildSortObject,
+  buildSearchFilter,
+  createStandardizedResponse,
+  calculatePagination
+} from '../utils/helpers';
 
 // Validation schemas
 const createOrderSchema = z.object({
@@ -235,31 +242,103 @@ export const createOrder = asyncHandler(async (req: CustomerAuthenticatedRequest
  *     security:
  *       - bearerAuth: []
  */
+/**
+ * @swagger
+ * /api/v1/orders:
+ *   get:
+ *     summary: Get customer orders with pagination and filters
+ *     tags: [Orders]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: size
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of orders per page
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           default: "createdAt"
+ *         description: Field to sort by
+ *       - in: query
+ *         name: sortOrder
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: "desc"
+ *         description: Sort order
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search orders by order number
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by order status
+ *       - in: query
+ *         name: paymentStatus
+ *         schema:
+ *           type: string
+ *         description: Filter by payment status
+ */
 export const getOrders = asyncHandler(async (req: CustomerAuthenticatedRequest, res: Response) => {
   if (!req.customer) {
     throw new ValidationError('Customer not authenticated');
   }
 
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = parseInt(req.query.limit as string) || 10;
-  const status = req.query.status as string;
+  // Parse standardized query parameters
+  const { page, size, sortBy, sortOrder, search } = parseStandardizedQuery(req.query);
+  
+  // Extract order-specific filters
+  const { status, paymentStatus } = req.query;
 
+  // Build filter
   const filter: any = { user: req.customer._id };
+  
+  // Status filter
   if (status) {
     filter.status = status;
   }
+  
+  // Payment status filter
+  if (paymentStatus) {
+    filter.paymentStatus = paymentStatus;
+  }
+  
+  // Search filter (by order number)
+  if (search && search.trim()) {
+    filter.orderNumber = { $regex: search.trim(), $options: 'i' };
+  }
 
+  // Count total elements
+  const totalElements = await Order.countDocuments(filter);
+  const pagination = calculatePagination(page, size, totalElements);
+
+  // Build sort object
+  const sort = buildSortObject(sortBy, sortOrder);
+
+  // Query orders with pagination
   const orders = await Order.find(filter)
     .populate({
       path: 'items.product',
       select: 'name slug images'
     })
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit);
+    .sort(sort)
+    .skip(pagination.skip)
+    .limit(pagination.size);
 
-  const total = await Order.countDocuments(filter);
-
+  // Format orders for response
   const formattedOrders = orders.map(order => ({
     _id: order._id,
     orderNumber: order.orderNumber,
@@ -288,17 +367,12 @@ export const getOrders = asyncHandler(async (req: CustomerAuthenticatedRequest, 
     }))
   }));
 
+  // Create standardized response
+  const response = createStandardizedResponse(formattedOrders, pagination);
+
   res.json({
     success: true,
-    data: {
-      orders: formattedOrders,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit)
-      }
-    }
+    ...response
   });
 });
 
