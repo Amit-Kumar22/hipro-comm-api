@@ -13,15 +13,19 @@ const storage = multer.diskStorage({
     const uploadPath = path.join(__dirname, '../../uploads/payment-proofs');
     try {
       await fs.mkdir(uploadPath, { recursive: true });
+      console.log('✅ Payment proofs directory ensured:', uploadPath);
       cb(null, uploadPath);
     } catch (error) {
+      console.error('❌ Failed to create payment proofs directory:', error);
       cb(error as Error, '');
     }
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
-    cb(null, `payment-${uniqueSuffix}${ext}`);
+    const filename = `payment-${uniqueSuffix}${ext}`;
+    console.log('📁 Generating filename for payment proof:', filename);
+    cb(null, filename);
   }
 });
 
@@ -31,9 +35,11 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
   fileFilter: (req, file, cb) => {
+    console.log('🔍 Checking file type:', file.mimetype);
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
+      console.log('❌ Invalid file type:', file.mimetype);
       cb(null, false);
     }
   }
