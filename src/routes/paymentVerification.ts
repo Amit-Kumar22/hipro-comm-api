@@ -4,6 +4,7 @@ import {
   getPaymentVerificationStatus,
   uploadPaymentProof 
 } from '../controllers/paymentVerificationController';
+import PaymentVerification from '../models/PaymentVerification';
 import { authenticateCustomer } from '../middleware/customerAuthMiddleware';
 import { optionalCustomerAuth } from '../middleware/optionalCustomerAuth';
 
@@ -24,27 +25,8 @@ router.get('/debug-auth', optionalCustomerAuth, (req: any, res) => {
 // Using optional auth so payment verification works even if session expires
 router.post(
   '/verify',
-  (req, res, next) => {
-    console.log('🔄 Payment verification route accessed');
-    console.log('Request headers:', {
-      contentType: req.headers['content-type'],
-      contentLength: req.headers['content-length'],
-      userAgent: req.headers['user-agent']
-    });
-    next();
-  },
   optionalCustomerAuth,
-  (req, res, next) => {
-    const customerReq = req as any;
-    console.log('🔐 Auth middleware passed, user:', customerReq.customer?.email || 'anonymous');
-    next();
-  },
   uploadPaymentProof,
-  (req, res, next) => {
-    const fileReq = req as any;
-    console.log('📁 File upload middleware passed, file:', fileReq.file ? fileReq.file.filename : 'no file');
-    next();
-  },
   verifyPayment
 );
 
@@ -53,6 +35,33 @@ router.get(
   '/verification/:orderId',
   authenticateCustomer,
   getPaymentVerificationStatus
+);
+
+// GET /api/payment/screenshot/:verificationId - Get payment screenshot
+router.get(
+  '/screenshot/:verificationId',
+  authenticateCustomer,
+  async (req, res): Promise<void> => {
+    try {
+      const { verificationId } = req.params;
+      const verification = await PaymentVerification.findById(verificationId);
+      
+      if (!verification || !verification.screenshot) {
+        res.status(404).json({ success: false, message: 'Screenshot not found' });
+        return;
+      }
+
+      res.set({
+        'Content-Type': verification.screenshot.contentType,
+        'Content-Length': verification.screenshot.size.toString(),
+        'Cache-Control': 'private, max-age=3600',
+      });
+
+      res.send(verification.screenshot.data);
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Failed to retrieve screenshot' });
+    }
+  }
 );
 
 export default router;

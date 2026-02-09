@@ -26,9 +26,18 @@ export const getAllPaymentVerifications = async (req: Request, res: Response): P
       .limit(limit)
       .lean();
 
+    // Transform data to include base64 screenshots for admin panel
+    const transformedVerifications = verifications.map(verification => ({
+      ...verification,
+      screenshotBase64: verification.screenshot ? 
+        `data:${verification.screenshot.contentType};base64,${verification.screenshot.data.toString('base64')}` : 
+        null,
+      screenshot: undefined // Remove binary data to reduce response size
+    }));
+
     res.status(200).json({
       success: true,
-      data: verifications,
+      data: transformedVerifications,
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(total / limit),

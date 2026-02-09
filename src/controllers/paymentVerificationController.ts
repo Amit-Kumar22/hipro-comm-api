@@ -7,27 +7,8 @@ import PaymentVerification from '../models/PaymentVerification';
 import { Order } from '../models/Order';
 import { CustomerOptionalAuthRequest } from '../middleware/optionalCustomerAuth';
 
-// Configure multer for payment screenshot uploads
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    const uploadPath = path.join(__dirname, '../../uploads/payment-proofs');
-    try {
-      await fs.mkdir(uploadPath, { recursive: true });
-      console.log('✅ Payment proofs directory ensured:', uploadPath);
-      cb(null, uploadPath);
-    } catch (error) {
-      console.error('❌ Failed to create payment proofs directory:', error);
-      cb(error as Error, '');
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    const filename = `payment-${uniqueSuffix}${ext}`;
-    console.log('📁 Generating filename for payment proof:', filename);
-    cb(null, filename);
-  }
-});
+// Configure multer for payment screenshot uploads - store in memory for database storage
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
@@ -35,11 +16,9 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
   fileFilter: (req, file, cb) => {
-    console.log('🔍 Checking file type:', file.mimetype);
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      console.log('❌ Invalid file type:', file.mimetype);
       cb(null, false);
     }
   }
@@ -58,17 +37,9 @@ export const uploadPaymentProof = upload.single('screenshot');
 
 export const verifyPayment = async (req: CustomerOptionalAuthRequest, res: Response): Promise<void> => {
   try {
-    console.log('Payment verification request received:', {
-      body: req.body,
-      file: req.file ? { filename: req.file.filename, size: req.file.size } : null,
-      isAuthenticated: req.isAuthenticated,
-      customerId: req.customer?.id
-    });
-
     // Validate request body
     const validation = paymentVerificationSchema.safeParse(req.body);
     if (!validation.success) {
-      console.error('Validation failed:', validation.error.errors);
       res.status(400).json({
         success: false,
         message: 'Invalid request data',
@@ -105,18 +76,15 @@ export const verifyPayment = async (req: CustomerOptionalAuthRequest, res: Respo
       if (order) {
         orderTotal = order.totals.total;
         orderExists = true;
-        console.log('Order found, validating against order total:', orderTotal);
       } else {
         // Order doesn't exist yet - this is okay for payment verification
         // We'll validate against the provided amount and create order later if needed
-        console.log('Order not found, but continuing with payment verification');
         orderTotal = parseFloat(amount);
         orderExists = false;
       }
     } else {
       // If no orderId provided, we'll just verify the payment details without order validation
       // This allows payment verification before order creation
-      console.log('No order ID provided, verifying payment without order validation');
       orderTotal = parseFloat(amount); // Use provided amount for validation
       orderExists = false;
     }
@@ -153,59 +121,52 @@ export const verifyPayment = async (req: CustomerOptionalAuthRequest, res: Respo
       return;
     }
 
-    // Create payment verification record
+    // Create payment verification record with screenshot in database
     const paymentVerification = new PaymentVerification({
       orderId: orderId || null,
       transactionId,
       amount: paidAmount,
-      screenshotPath: req.file.path,
-      screenshotFilename: req.file.filename,
-      verificationStatus: 'verified', // In real app, might be 'pending' for manual review
-      verifiedAt: new Date(),
-      verifiedBy: req.isAuthenticated ? `customer:${req.customer.id}` : 'system'
+      paymentMethod: req.body.paymentMethod || 'bank_transfer',
+      screenshot: {
+        data: req.file.buffer,
+        contentType: req.file.mimetype,
+        filename: req.file.originalname,
+        size: req.file.size
+      },
+      customerInfo: req.customer ? {
+        email: req.customer.email,
+        name: req.customer.name,
+        phone: req.customer.phone
+      } : {
+        email: req.body.customerEmail || null,
+        name: req.body.customerName || null,
+        phone: req.body.customerPhone || null
+      },
+      verificationStatus: 'pending', // Always pending for admin review
+      verifiedAt: null,
+      verifiedBy: null
     });
 
     await paymentVerification.save();
 
-    // Update order status to paid only if orderId exists and order is found in database
-    if (orderId && orderId.trim() && orderExists) {
-      await Order.findOneAndUpdate(
-        { orderId },
-        { 
-          paymentStatus: 'paid',
-          status: 'confirmed'
-        }
-      );
-      console.log('Order status updated to paid for orderId:', orderId);
-    } else {
-      console.log('Order update skipped - order not found or no orderId provided');
-    }
-
-    res.status(200).json({
+    // Do NOT update order status to paid automatically - wait for admin verification
+    // This prevents fraud payments from being processed automatically
+    
+    res.json({
       success: true,
-      message: 'Payment verified successfully',
+      message: 'Payment verification submitted successfully. Your payment is being reviewed by our team.',
       data: {
-        verificationId: paymentVerification.id,
-        status: 'verified',
-        orderId: orderId || null,
-        transactionId,
-        amount: paidAmount,
-        verifiedAt: paymentVerification.verifiedAt,
-        orderExists
+        verificationId: paymentVerification._id,
+        transactionId: paymentVerification.transactionId,
+        amount: paymentVerification.amount,
+        status: paymentVerification.verificationStatus,
+        submittedAt: paymentVerification.createdAt,
+        message: 'Payment verification is pending admin approval. You will receive confirmation once verified.'
       }
     });
 
   } catch (error) {
     console.error('Payment verification error:', error);
-    
-    // Clean up uploaded file if verification fails
-    if (req.file) {
-      try {
-        await fs.unlink(req.file.path);
-      } catch (cleanupError) {
-        console.error('Failed to cleanup uploaded file:', cleanupError);
-      }
-    }
 
     res.status(500).json({
       success: false,
@@ -219,42 +180,67 @@ export const getPaymentVerificationStatus = async (req: Request, res: Response):
   try {
     const { orderId } = req.params;
 
-    if (!orderId) {
-      res.status(400).json({
-        success: false,
-        message: 'Order ID is required'
-      });
-      return;
-    }
-
-    // Fetch verification from database
     const verification = await PaymentVerification.findOne({ orderId }).sort({ createdAt: -1 });
     
     if (!verification) {
       res.status(404).json({
         success: false,
-        message: 'Payment verification not found for this order'
+        message: 'No payment verification found for this order'
       });
       return;
     }
 
-    res.status(200).json({
+    res.json({
       success: true,
       data: {
+        verificationId: verification._id,
         orderId: verification.orderId,
-        status: verification.verificationStatus,
-        verifiedAt: verification.verifiedAt,
         transactionId: verification.transactionId,
         amount: verification.amount,
-        createdAt: verification.createdAt
+        status: verification.verificationStatus,
+        submittedAt: verification.createdAt,
+        verifiedAt: verification.verifiedAt,
+        rejectionReason: verification.rejectionReason
       }
     });
-
-  } catch (error) {
-    console.error('Error fetching payment verification status:', error);
+  } catch (error: any) {
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch payment verification status'
+      message: 'Failed to fetch payment verification status',
+      error: error.message
+    });
+  }
+};
+
+// Serve screenshot from database
+export const getPaymentScreenshot = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { verificationId } = req.params;
+
+    const verification = await PaymentVerification.findById(verificationId);
+    
+    if (!verification || !verification.screenshot) {
+      res.status(404).json({
+        success: false,
+        message: 'Screenshot not found'
+      });
+      return;
+    }
+
+    // Set appropriate headers
+    res.set({
+      'Content-Type': verification.screenshot.contentType,
+      'Content-Length': verification.screenshot.size.toString(),
+      'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
+    });
+
+    // Send the image data
+    res.send(verification.screenshot.data);
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve screenshot',
+      error: error.message
     });
   }
 };
