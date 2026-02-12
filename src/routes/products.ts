@@ -8,7 +8,9 @@ import {
   updateProductStock,
   deleteProduct,
   getFeaturedProducts,
-  getProductsByCategory
+  getProductsByCategory,
+  getDeletedProducts,
+  restoreProduct
 } from '../controllers/productController';
 import { authenticate, requireAdmin } from '../middleware/authMiddleware';
 
@@ -19,9 +21,13 @@ router.get('/', getProducts);
 router.get('/featured', getFeaturedProducts);
 router.get('/by-slug/:slug', getProductBySlug);
 router.get('/category/:categoryId', getProductsByCategory);
-router.get('/:id', getProduct);
 
-// Protected routes (Admin only)
+// Protected routes (Admin only) - MUST come BEFORE /:id route
+router.get('/deleted', authenticate, requireAdmin, getDeletedProducts);
+router.post('/:id/restore', authenticate, requireAdmin, restoreProduct);
+
+// Public route with dynamic ID - MUST come AFTER specific routes
+router.get('/:id', getProduct);
 router.post('/', authenticate, requireAdmin, createProduct);
 router.put('/:id', authenticate, requireAdmin, updateProduct);
 router.patch('/:id/stock', authenticate, requireAdmin, updateProductStock);
