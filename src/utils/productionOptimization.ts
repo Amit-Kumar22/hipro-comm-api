@@ -44,6 +44,7 @@ import NodeCache from 'node-cache';
 
 class ProductionCache {
   private memoryCache: NodeCache;
+  private cacheKeys: Set<string> = new Set();
   
   constructor() {
     // Memory cache for frequently accessed data
@@ -68,16 +69,39 @@ class ProductionCache {
   async set(key: string, data: any, ttl: number = 300): Promise<void> {
     // Store in memory cache
     this.memoryCache.set(key, data, Math.min(ttl, 300)); // Max 5 minutes in memory
+    this.cacheKeys.add(key);
     console.log(`💾 Cached in memory: ${key}`);
   }
   
   async clear(pattern?: string): Promise<void> {
     if (pattern) {
-      const keys = this.memoryCache.keys().filter(key => key.includes(pattern));
-      keys.forEach(key => this.memoryCache.del(key));
+      const keysToDelete = Array.from(this.cacheKeys).filter(key => 
+        key.includes(pattern) || 
+        key.startsWith('products_') || 
+        key.startsWith('categories_')
+      );
+      keysToDelete.forEach(key => {
+        this.memoryCache.del(key);
+        this.cacheKeys.delete(key);
+      });
+      console.log(`🧹 Cleared ${keysToDelete.length} cache entries for pattern: ${pattern}`);
     } else {
       this.memoryCache.flushAll();
+      this.cacheKeys.clear();
+      console.log('🧹 Cleared all cache');
     }
+  }
+  
+  // NEW: Force clear all product-related cache
+  async clearAllProductCache(): Promise<void> {
+    const productKeys = Array.from(this.cacheKeys).filter(key => 
+      key.includes('product') || key.includes('category') || key.includes('inventory')
+    );
+    productKeys.forEach(key => {
+      this.memoryCache.del(key);
+      this.cacheKeys.delete(key);
+    });
+    console.log(`🔥 Force cleared ${productKeys.length} product-related cache entries`);
   }
 }
 
@@ -208,9 +232,15 @@ export const optimizeApiResponse = () => {
     const originalJson = res.json;
     
     res.json = function(data: any) {
-      // Add performance headers
+      // Add performance headers - FIXED: No caching for immediate updates
+      const isProductRoute = req.path.includes('/products') || req.path.includes('/categories');
+      const isAdminRoute = req.headers.authorization?.startsWith('Bearer ');
+      
       res.set({
-        'Cache-Control': req.method === 'GET' ? 'public, max-age=300' : 'no-cache',
+        // No caching for product data to ensure real-time updates
+        'Cache-Control': isProductRoute || isAdminRoute ? 'no-cache, no-store, must-revalidate' : (req.method === 'GET' ? 'public, max-age=60' : 'no-cache'),
+        'Pragma': isProductRoute || isAdminRoute ? 'no-cache' : undefined,
+        'Expires': isProductRoute || isAdminRoute ? '0' : undefined,
         'X-Response-Time': `${Date.now() - (req as any).startTime}ms`,
         'X-Powered-By': 'HiproTech-Optimized'
       });

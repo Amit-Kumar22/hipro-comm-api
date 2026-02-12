@@ -8,7 +8,6 @@ import {
   buildSearchFilter,
   createStandardizedResponse
 } from '../utils/helpers.js';
-import { productionCache, ProductionQueryOptimizer } from '../utils/productionOptimization';
 
 /**
  * Optimized Get Products Controller
@@ -17,7 +16,10 @@ import { productionCache, ProductionQueryOptimizer } from '../utils/productionOp
  */
 export const getProductsOptimized = asyncHandler(async (req: Request, res: Response): Promise<void> => {
   // Parse standardized query parameters
-  const { page, size, sortBy, sortOrder, search } = parseStandardizedQuery(req.query);
+  const { page = 1, size = 10, sortBy, sortOrder, search } = parseStandardizedQuery(req.query);
+  
+  // Set sort field
+  const sortField = sortBy || 'createdAt';
   
   // Extract additional filters
   const {
@@ -29,112 +31,53 @@ export const getProductsOptimized = asyncHandler(async (req: Request, res: Respo
     isActive = true
   } = req.query;
 
-  // Create cache key based on query parameters
-  const cacheKey = `products_${JSON.stringify({
-    page, size, sortBy, sortOrder, search, category, minPrice, maxPrice, featured, inStock, isActive
-  })}`;
+  console.log('🚀 NO CACHE: Direct database query for immediate results');
 
-  // Try to get from cache first (केवल production में)
-  if (process.env.NODE_ENV === 'production') {
-    const cachedResult = await productionCache.get(cacheKey);
-    if (cachedResult) {
-      console.log(`📦 Cache hit for products query: ${search || 'all'}`);
-      res.json(cachedResult);
-      return;
-    }
-  }
-
-  // Build filters for aggregation pipeline
-  const filters = {
-    category: category || undefined,
-    search: search || undefined,
-    priceRange: Number(minPrice) > 0 || Number(maxPrice) < 999999 ? { min: Number(minPrice), max: Number(maxPrice) } : undefined,
-    featured: featured === 'true' ? true : undefined,
-    isActive: isActive === 'true' || isActive === true
+  // Build simple filters for fast query
+  const matchFilter: any = {
+    isActive: isActive === 'true' || isActive === true,
+    ...(category && { category }),
+    ...(search && { $text: { $search: search } }),
+    ...(featured === 'true' && { isFeatured: true })
   };
 
-  // Use optimized aggregation pipeline
-  const pipeline = ProductionQueryOptimizer.getProductsPipeline(filters, page, size);
-  
-  // Execute aggregation with inventory lookup in single query
-  const optimizedPipeline = [
-    ...pipeline,
-    // Add inventory lookup in the same aggregation
-    {
-      $lookup: {
-        from: 'inventories',
-        localField: '_id',
-        foreignField: 'product',
-        as: 'inventoryData',
-        pipeline: [
-          { $match: { isActive: true } },
-          {
-            $project: {
-              availableForSale: 1,
-              quantityAvailable: 1,
-              quantityReserved: 1,
-              isOutOfStock: 1,
-              isLowStock: 1,
-              reorderLevel: 1
-            }
-          }
-        ]
-      }
-    },
-    {
-      $addFields: {
-        inventory: {
-          $ifNull: [
-            { $arrayElemAt: ['$inventoryData', 0] },
-            {
-              availableForSale: 0,
-              quantityAvailable: 0,
-              quantityReserved: 0,
-              isOutOfStock: true,
-              isLowStock: false,
-              reorderLevel: 0
-            }
-          ]
-        }
-      }
-    },
-    {
-      $unset: 'inventoryData'
-    }
-  ];
-
-  // Add stock filter to pipeline if needed
-  if (inStock === 'true') {
-    optimizedPipeline.push({
-      $match: {
-        'inventory.availableForSale': { $gt: 0 }
-      }
-    });
+  // Add price range filter if needed
+  if (Number(minPrice) > 0 || Number(maxPrice) < 999999) {
+    matchFilter['price.selling'] = {
+      $gte: Number(minPrice),
+      $lte: Number(maxPrice)
+    };
   }
 
-  // Execute the optimized query
-  const [products, totalCount] = await Promise.all([
-    Product.aggregate(optimizedPipeline),
+  // Use simple queries for immediate response - NO COMPLEX AGGREGATION
+  let products, totalCount;
+  let totalElements = 0;
+
+  console.log('🚀 SIMPLE QUERY: Using fast simple queries for immediate response');
+  
+  [products, totalElements] = await Promise.all([
+    Product.find(matchFilter)
+      .populate('category', 'name slug')
+      .sort({ [sortField]: sortOrder === 'asc' ? 1 : -1 })
+      .skip((page - 1) * size)
+      .limit(size)
+      .lean(),
     
-    // Count query with same filters (but without pagination)
-    Product.aggregate([
-      { $match: { 
-        isActive: filters.isActive,
-        ...(filters.category && { category: filters.category }),
-        ...(filters.search && { $text: { $search: filters.search } }),
-        ...(filters.priceRange && {
-          price: {
-            $gte: filters.priceRange.min,
-            $lte: filters.priceRange.max
-          }
-        }),
-        ...(filters.featured && { isFeatured: true })
-      }},
-      { $count: 'total' }
-    ])
+    Product.countDocuments(matchFilter)
   ]);
 
-  const totalElements = totalCount[0]?.total || 0;
+  // Add simple inventory data
+  for (let product of products) {
+    const inventory = await Inventory.findOne({ product: product._id, isActive: true }).lean();
+    (product as any).inventory = inventory || {
+      availableForSale: 0,
+      quantityAvailable: 0,
+      quantityReserved: 0,
+      isOutOfStock: true,
+      isLowStock: false,
+      reorderLevel: 0
+    };
+  }
   const pagination = calculatePagination(page, size, totalElements);
 
   // Create standardized response
@@ -145,12 +88,7 @@ export const getProductsOptimized = asyncHandler(async (req: Request, res: Respo
     ...response
   };
 
-  // Cache the result for 5 minutes in production
-  if (process.env.NODE_ENV === 'production') {
-    await productionCache.set(cacheKey, finalResponse, 300); // 5 minutes
-    console.log(`💾 Cached products query: ${search || 'all'}`);
-  }
-
+  console.log('✅ Direct response - NO CACHING for immediate updates');
   res.json(finalResponse);
 });
 
@@ -160,18 +98,7 @@ export const getProductsOptimized = asyncHandler(async (req: Request, res: Respo
 export const getProductBySlugOptimized = asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const { slug } = req.params;
   
-  // Create cache key
-  const cacheKey = `product_${slug}`;
-  
-  // Try cache first in production
-  if (process.env.NODE_ENV === 'production') {
-    const cachedProduct = await productionCache.get(cacheKey);
-    if (cachedProduct) {
-      console.log(`📦 Cache hit for product: ${slug}`);
-      res.json(cachedProduct);
-      return;
-    }
-  }
+  console.log('🚀 NO CACHE: Direct product query for immediate results');
 
   // Optimized aggregation for single product
   const pipeline = [
@@ -255,12 +182,7 @@ export const getProductBySlugOptimized = asyncHandler(async (req: Request, res: 
     data: product
   };
 
-  // Cache for 10 minutes in production
-  if (process.env.NODE_ENV === 'production') {
-    await productionCache.set(cacheKey, response, 600); // 10 minutes
-    console.log(`💾 Cached product: ${slug}`);
-  }
-
+  console.log('✅ Direct product response - NO CACHING');
   res.json(response);
 });
 
@@ -268,17 +190,7 @@ export const getProductBySlugOptimized = asyncHandler(async (req: Request, res: 
  * Optimized Categories with Product Count
  */
 export const getCategoriesOptimized = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const cacheKey = 'categories_with_products';
-  
-  // Try cache first
-  if (process.env.NODE_ENV === 'production') {
-    const cachedCategories = await productionCache.get(cacheKey);
-    if (cachedCategories) {
-      console.log('📦 Cache hit for categories');
-      res.json(cachedCategories);
-      return;
-    }
-  }
+  console.log('🚀 NO CACHE: Direct categories query for immediate results');
 
   // Simple categories query with product count
   const categories = await Category.find({ isActive: true })
@@ -290,24 +202,16 @@ export const getCategoriesOptimized = asyncHandler(async (req: Request, res: Res
     data: categories
   };
 
-  // Cache for 15 minutes
-  if (process.env.NODE_ENV === 'production') {
-    await productionCache.set(cacheKey, response, 900); // 15 minutes
-    console.log('💾 Cached categories');
-  }
-
+  console.log('✅ Direct categories response - NO CACHING');
   res.json(response);
 });
 
 /**
  * Clear cache when products are updated
  */
-export const clearProductCache = () => {
-  if (process.env.NODE_ENV === 'production') {
-    productionCache.clear('products');
-    productionCache.clear('categories');
-    console.log('🗑️ Cleared product cache');
-  }
+export const clearProductCache = async () => {
+  // No cache to clear - direct database queries for immediate updates
+  console.log('✅ NO CACHE to clear - using direct database queries');
 };
 
 export default {

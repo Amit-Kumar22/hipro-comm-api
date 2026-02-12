@@ -12,7 +12,7 @@ require('dotenv').config();
 const { Product } = require('./dist/models/Product.js');
 const { Category } = require('./dist/models/Category.js');
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/hipro-comm';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/hipro-comm-db';
 
 // Sample categories
 const sampleCategories = [
