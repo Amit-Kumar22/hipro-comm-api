@@ -2,11 +2,8 @@ const { MongoClient } = require('mongodb');
 
 // Try different possible MongoDB URLs
 const possibleUrls = [
-  'mongodb://localhost:27017/hipro-ecommerce',
-  'mongodb://localhost:27017/hiprotech',
-  'mongodb://localhost:27017/ecommerce',
-  'mongodb://127.0.0.1:27017/hipro-ecommerce',
-  process.env.MONGODB_URI || process.env.MONGO_URL
+  process.env.MONGODB_URI || 'mongodb://localhost:27017/hipro-comm-db',
+  'mongodb://127.0.0.1:27017/hipro-comm-db'
 ].filter(Boolean);
 
 async function checkDatabase() {
