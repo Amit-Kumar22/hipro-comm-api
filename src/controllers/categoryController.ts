@@ -15,6 +15,7 @@ import {
   createStandardizedResponse,
   calculatePagination
 } from '../utils/helpers';
+import { clearProductCache } from './productControllerOptimized';
 
 // Validation schema for category
 const categorySchema = z.object({
@@ -259,6 +260,9 @@ export const createCategory = asyncHandler(async (req: AuthenticatedRequest, res
   const populatedCategory = await Category.findById(category._id)
     .populate('parent', 'name slug');
 
+  // Clear cache after category creation
+  clearProductCache();
+
   res.status(201).json({
     success: true,
     data: populatedCategory
@@ -312,6 +316,9 @@ export const updateCategory = asyncHandler(async (req: AuthenticatedRequest, res
     { new: true, runValidators: true }
   ).populate('parent', 'name slug').populate('children', 'name slug');
 
+  // Clear cache after category update
+  clearProductCache();
+
   res.json({
     success: true,
     data: updatedCategory
@@ -341,6 +348,9 @@ export const deleteCategory = asyncHandler(async (req: AuthenticatedRequest, res
 
   // Soft delete by setting isActive to false
   await Category.findByIdAndUpdate(id, { isActive: false });
+
+  // Clear cache after category deletion
+  clearProductCache();
 
   res.json({
     success: true,

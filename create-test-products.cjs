@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const { MongoClient } = require('mongodb');
 
 // MongoDB connection
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017/hipro-ecommerce';
+const MONGO_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017/hipro-comm-db';
 
 async function createTestProducts() {
   const client = new MongoClient(MONGO_URL);

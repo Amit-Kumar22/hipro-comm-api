@@ -4,7 +4,8 @@ import { Product, Category, Inventory } from '../models';
 import { 
   asyncHandler, 
   ValidationError, 
-  NotFoundError 
+  NotFoundError,
+  BadRequestError
 } from '../middleware/errorMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { 
@@ -198,18 +199,25 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
     maxPrice = 999999,
     featured,
     inStock,
-    isActive = true
+    isActive
   } = req.query;
 
   // Build base filter
   const filter: any = {};
   
-  // Active status filter (default to true for public API)
+  // Check if this is an admin request by checking authorization header
+  const isAdminRequest = req.headers.authorization && req.headers.authorization.startsWith('Bearer ');
+  
+  // Active status filter logic
   if (isActive !== undefined) {
-    filter.isActive = isActive === 'true' || isActive === true;
-  } else {
-    filter.isActive = true; // Default behavior
+    // Explicit isActive parameter provided - use it
+    const isActiveValue = typeof isActive === 'string' ? isActive === 'true' : !!isActive;
+    filter.isActive = isActiveValue;
+  } else if (!isAdminRequest) {
+    // For public API (non-admin), default to showing only active products
+    filter.isActive = true;
   }
+  // For admin requests with no explicit isActive parameter, show all products (no isActive filter)
   
   // Search filter
   if (search && search.trim()) {
@@ -560,6 +568,15 @@ export const createProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     inStock: product.inStock
   });
 
+  // Clear all caches for immediate updates
+  try {
+    const { productionCache } = await import('../utils/productionOptimization');
+    await productionCache.clearAllProductCache();
+    console.log('🧹 Cache cleared after product creation');
+  } catch (error) {
+    console.log('⚠️ Cache clear failed:', error);
+  }
+
   res.status(201).json({
     success: true,
     data: {
@@ -647,6 +664,15 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
     }
   }
 
+  // Clear all caches for immediate updates
+  try {
+    const { productionCache } = await import('../utils/productionOptimization');
+    await productionCache.clearAllProductCache();
+    console.log('🧹 Cache cleared after product update');
+  } catch (error) {
+    console.log('⚠️ Cache clear failed:', error);
+  }
+
   res.json({
     success: true,
     data: updatedProduct,
@@ -656,28 +682,76 @@ export const updateProduct = asyncHandler(async (req: AuthenticatedRequest, res:
   });
 });
 
-// Delete product (Admin only)
+// Delete product (Dual system: soft delete from products page, hard delete from delete history)
 export const deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
+  const { permanent } = req.query; // ?permanent=true for hard delete
 
   const product = await Product.findById(id);
   if (!product) {
     throw new NotFoundError('Product not found');
   }
 
-  // Soft delete by setting isActive to false
-  await Product.findByIdAndUpdate(id, { isActive: false });
+  if (permanent === 'true') {
+    // PERMANENT DELETE (from Delete History page)
+    await Product.findByIdAndDelete(id);
+    await Inventory.findOneAndDelete({ product: id });
+    
+    console.log(`🗑️ PERMANENTLY DELETED product: ${product.name} (ID: ${id})`);
 
-  // Also deactivate inventory
-  await Inventory.findOneAndUpdate(
-    { product: id }, 
-    { isActive: false }
-  );
+    // Clear all caches for immediate updates
+    try {
+      const { productionCache } = await import('../utils/productionOptimization');
+      await productionCache.clearAllProductCache();
+      console.log('🧹 Cache cleared after permanent product deletion');
+    } catch (error) {
+      console.log('⚠️ Cache clear failed:', error);
+    }
 
-  res.json({
-    success: true,
-    message: 'Product deleted successfully'
-  });
+    res.json({
+      success: true,
+      message: 'Product permanently deleted successfully',
+      data: { 
+        productId: id, 
+        deletedPermanently: true,
+        action: 'hard_delete',
+        location: 'delete_history'
+      }
+    });
+  } else {
+    // SOFT DELETE (from Products page - move to Delete History)
+    await Product.findByIdAndUpdate(id, { 
+      isActive: false,
+      deletedAt: new Date() 
+    });
+    
+    await Inventory.findOneAndUpdate(
+      { product: id }, 
+      { isActive: false, deletedAt: new Date() }
+    );
+    
+    console.log(`📦 SOFT DELETED product (moved to Delete History): ${product.name} (ID: ${id})`);
+
+    // Clear all caches for immediate updates
+    try {
+      const { productionCache } = await import('../utils/productionOptimization');
+      await productionCache.clearAllProductCache();
+      console.log('🧹 Cache cleared after soft product deletion');
+    } catch (error) {
+      console.log('⚠️ Cache clear failed:', error);
+    }
+
+    res.json({
+      success: true,
+      message: 'Product moved to Delete History successfully',
+      data: { 
+        productId: id, 
+        deletedPermanently: false,
+        action: 'soft_delete',
+        location: 'delete_history'
+      }
+    });
+  }
 });
 
 // Get featured products
@@ -826,5 +900,81 @@ export const updateProductStock = asyncHandler(async (req: AuthenticatedRequest,
       inventory: updatedInventory
     },
     message: `Stock updated to ${validatedData.quantity} units`
+  });
+});
+
+// Get deleted products for Delete History page
+export const getDeletedProducts = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const skip = (page - 1) * limit;
+
+  // Get soft-deleted products (isActive: false)
+  const deletedProducts = await Product.find({ 
+    isActive: false,
+    deletedAt: { $exists: true }
+  })
+    .populate('category', 'name')
+    .sort({ deletedAt: -1 })
+    .skip(skip)
+    .limit(limit);
+
+  const total = await Product.countDocuments({ 
+    isActive: false,
+    deletedAt: { $exists: true }
+  });
+
+  console.log(`📋 FETCHED ${deletedProducts.length} deleted products for Delete History`);
+
+  res.json({
+    success: true,
+    data: {
+      products: deletedProducts,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    }
+  });
+});
+
+// Restore product from Delete History
+export const restoreProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+
+  const product = await Product.findById(id);
+  if (!product) {
+    throw new NotFoundError('Product not found');
+  }
+
+  if (product.isActive) {
+    throw new BadRequestError('Product is already active');
+  }
+
+  // Restore product
+  await Product.findByIdAndUpdate(id, { 
+    isActive: true,
+    $unset: { deletedAt: 1 }
+  });
+  
+  await Inventory.findOneAndUpdate(
+    { product: id }, 
+    { 
+      isActive: true,
+      $unset: { deletedAt: 1 }
+    }
+  );
+  
+  console.log(`♻️ RESTORED product: ${product.name} (ID: ${id})`);
+
+  res.json({
+    success: true,
+    message: 'Product restored successfully',
+    data: { 
+      productId: id, 
+      restored: true 
+    }
   });
 });

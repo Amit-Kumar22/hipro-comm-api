@@ -43,37 +43,12 @@ export const optimizeMongoose = () => {
 };
 
 /**
- * Response Caching Middleware
+ * Response Caching Middleware - DISABLED for real-time updates
  */
 export const cacheResponse = (duration = 300) => { // 5 minutes default
   return (req: Request, res: Response, next: NextFunction) => {
-    // Skip caching for non-GET requests
-    if (req.method !== 'GET') {
-      return next();
-    }
-
-    const key = req.originalUrl;
-    const cached = cache.get(key);
-
-    if (cached) {
-      console.log(`📦 Cache hit for: ${key}`);
-      return res.json(cached);
-    }
-
-    // Store original json method
-    const originalJson = res.json;
-
-    // Override json method to cache response
-    res.json = function(body: any) {
-      // Only cache successful responses
-      if (res.statusCode === 200 && body) {
-        cache.set(key, body, duration);
-        console.log(`💾 Cached response for: ${key}`);
-      }
-      
-      return originalJson.call(this, body);
-    };
-
+    // DISABLED: Skip all caching for immediate updates
+    console.log(`� Cache disabled for real-time updates: ${req.originalUrl}`);
     next();
   };
 };
