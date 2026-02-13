@@ -16,6 +16,9 @@ export const config = {
   MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE || '10485760', 10),
   ALLOWED_FILE_TYPES: process.env.ALLOWED_FILE_TYPES?.split(',') || ['image/jpeg', 'image/png', 'image/webp'],
   LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+  // Google OAuth Configuration
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
   // SMTP Configuration for Hostinger
   SMTP_HOST: process.env.SMTP_HOST || 'smtp.hostinger.com',
   SMTP_PORT: process.env.SMTP_PORT || '587',

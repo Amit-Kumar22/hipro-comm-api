@@ -3,6 +3,7 @@ import {
   sendOTP,
   registerCustomer,
   loginCustomer,
+  googleAuth,
   verifyOTP,
   resendOTP,
   logoutCustomer,
@@ -17,6 +18,7 @@ const router = express.Router();
 router.post('/send-otp', sendOTP);
 router.post('/register', registerCustomer);
 router.post('/login', loginCustomer);
+router.post('/google', googleAuth);
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
 
