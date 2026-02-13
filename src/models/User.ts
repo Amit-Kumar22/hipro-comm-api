@@ -9,6 +9,9 @@ export interface IUser extends Document {
   password: string;
   role: 'customer' | 'admin';
   phone?: string;
+  googleId?: string;
+  provider?: string;
+  avatar?: string;
   addresses: {
     type: 'billing' | 'shipping';
     street: string;
@@ -48,7 +51,10 @@ const UserSchema = new Schema<IUser>({
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
+    required: function(this: IUser) {
+      // Password is not required for Google OAuth users
+      return !this.googleId;
+    },
     minLength: [6, 'Password must be at least 6 characters'],
     select: false
   },
@@ -60,6 +66,18 @@ const UserSchema = new Schema<IUser>({
   phone: {
     type: String,
     match: [/^\d{10}$/, 'Please enter a valid 10-digit phone number']
+  },
+  googleId: {
+    type: String,
+    sparse: true // Allows multiple null values, but if set must be unique
+  },
+  provider: {
+    type: String,
+    enum: ['local', 'google'],
+    default: 'local'
+  },
+  avatar: {
+    type: String
   },
   addresses: [{
     type: {
@@ -128,6 +146,8 @@ const UserSchema = new Schema<IUser>({
 
 // Indexes
 UserSchema.index({ email: 1 });
+UserSchema.index({ googleId: 1 }, { sparse: true }); // Sparse index for googleId
+UserSchema.index({ provider: 1 });
 UserSchema.index({ role: 1 });
 UserSchema.index({ createdAt: -1 });
 

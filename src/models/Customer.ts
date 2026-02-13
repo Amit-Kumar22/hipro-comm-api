@@ -9,6 +9,9 @@ export interface ICustomer extends Document {
   password: string;
   phone?: string;
   isEmailVerified: boolean;
+  googleId?: string;
+  provider?: string;
+  avatar?: string;
   otp?: {
     code: string;
     expiresAt: Date;
@@ -46,7 +49,10 @@ const CustomerSchema = new Schema<ICustomer>({
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
+    required: function(this: ICustomer) {
+      // Password is not required for Google OAuth users
+      return !this.googleId;
+    },
     minLength: [6, 'Password must be at least 6 characters'],
     select: false
   },
@@ -59,6 +65,18 @@ const CustomerSchema = new Schema<ICustomer>({
     type: Boolean,
     default: false,
     required: true
+  },
+  googleId: {
+    type: String,
+    sparse: true // Allows multiple null values, but if set must be unique
+  },
+  provider: {
+    type: String,
+    enum: ['local', 'google'],
+    default: 'local'
+  },
+  avatar: {
+    type: String
   },
   otp: {
     code: {
@@ -112,6 +130,8 @@ const CustomerSchema = new Schema<ICustomer>({
 
 // Indexes
 CustomerSchema.index({ email: 1 });
+CustomerSchema.index({ googleId: 1 }, { sparse: true }); // Sparse index for googleId
+CustomerSchema.index({ provider: 1 });
 CustomerSchema.index({ isEmailVerified: 1 });
 CustomerSchema.index({ 'otp.expiresAt': 1 }, { expireAfterSeconds: 0 }); // Auto cleanup expired OTPs
 CustomerSchema.index({ createdAt: -1 });

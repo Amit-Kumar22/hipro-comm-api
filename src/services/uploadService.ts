@@ -140,7 +140,9 @@ export const mediaUpload = multer({
 
 // Helper function to generate file URL
 export const generateFileUrl = (filename: string, type: 'image' | 'video' = 'image'): string => {
-  const baseUrl = process.env.API_BASE_URL || 'http://localhost:5001';
+  const baseUrl = process.env.NODE_ENV === 'production' 
+    ? 'https://shop.hiprotech.org' 
+    : (process.env.API_BASE_URL || 'http://localhost:5001');
   return `${baseUrl}/uploads/${type}s/${filename}`;
 };
 
