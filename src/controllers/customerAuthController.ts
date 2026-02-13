@@ -649,8 +649,16 @@ export const googleAuth = asyncHandler(async (req: Request, res: Response) => {
       isEmailVerified: customer.isEmailVerified
     });
 
-    // Set cookie
-    res.cookie('customerToken', token, getCookieOptions());
+    // Set cookie with enhanced production options
+    const cookieOptions = getCookieOptions();
+    res.cookie('customerToken', token, {
+      ...cookieOptions,
+      // Enhanced production settings
+      ...(config.NODE_ENV === 'production' && {
+        secure: true,
+        sameSite: 'none', // Required for cross-origin cookies in production
+      })
+    });
 
     res.status(200).json({
       success: true,
