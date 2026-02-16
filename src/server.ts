@@ -54,7 +54,7 @@ const app = express();
 app.set('trust proxy', 1);
 
 /* -------------------------------------------------
-   CORS (ONLY ONE — FIXED)
+   CORS (Enhanced for Google OAuth in Production)
 -------------------------------------------------- */
 if (config.NODE_ENV === 'development') {
   console.log('🔓 CORS: Allow all origins (development)');
@@ -63,7 +63,7 @@ if (config.NODE_ENV === 'development') {
     credentials: true,
   }));
 } else {
-  console.log('🔒 CORS: Production mode');
+  console.log('🔒 CORS: Production mode with Google OAuth support');
   app.use(cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
@@ -71,17 +71,32 @@ if (config.NODE_ENV === 'development') {
       const allowedOrigins = [
         'https://shop.hiprotech.org',
         'https://adminshop.hiprotech.org',
+        // Add Google OAuth origins for production
+        'https://accounts.google.com',
+        'https://accounts.google.com/gsi',
       ];
 
       if (allowedOrigins.includes(origin)) {
         return callback(null, origin); // ✅ VERY IMPORTANT
       }
 
+      console.warn(`CORS blocked for origin: ${origin}`);
       return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+      'Content-Type', 
+      'Authorization', 
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+      'Cache-Control',
+      'Pragma'
+    ],
+    // Enhanced options for Google OAuth
+    optionsSuccessStatus: 200,
+    preflightContinue: false,
   }));
 }
 

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import { OAuth2Client } from 'google-auth-library';
 import { User } from '../models/User';
 import { config } from '../config/env';
 import { 
@@ -28,6 +29,15 @@ const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
   newPassword: z.string().min(6, 'New password must be at least 6 characters')
 });
+
+const googleAuthSchema = z.object({
+  idToken: z.string().min(1, 'Google ID token is required')
+});
+
+// Initialize Google OAuth2 client
+const client = new OAuth2Client(
+  config.GOOGLE_CLIENT_ID
+);
 
 // Generate JWT token
 const generateToken = (payload: Omit<JWTPayload, 'iat' | 'exp'>): string => {
@@ -248,6 +258,132 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
       token
     }
   });
+});
+
+/**
+ * @swagger
+ * /api/v1/auth/google:
+ *   post:
+ *     summary: Google OAuth login/register for users (including admins)
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idToken
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: Google ID token from frontend
+ *               role:
+ *                 type: string
+ *                 enum: [customer, admin]
+ *                 description: Role for new users (defaults to customer)
+ *     responses:
+ *       200:
+ *         description: Google authentication successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Google login successful"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     token:
+ *                       type: string
+ *       400:
+ *         description: Invalid Google token
+ *       500:
+ *         description: Internal server error
+ */
+export const googleAuth = asyncHandler(async (req: Request, res: Response) => {
+  const { idToken } = googleAuthSchema.parse(req.body);
+  const role = req.body.role === 'admin' ? 'admin' : 'customer'; // Default to customer
+
+  try {
+    // Verify the Google ID token
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: config.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload) {
+      throw new AuthError('Invalid Google token');
+    }
+
+    const { sub: googleId, email, name, picture } = payload;
+    
+    if (!email || !name) {
+      throw new AuthError('Google account must have email and name');
+    }
+
+    // Check if user already exists with this email
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // If user exists but doesn't have googleId, attach it
+      if (!user.googleId) {
+        user.googleId = googleId;
+        user.provider = 'google';
+        if (picture) user.avatar = picture;
+        await user.save();
+      }
+    } else {
+      // Create new user with Google OAuth
+      user = await User.create({
+        name,
+        email,
+        googleId,
+        provider: 'google',
+        role: role, // Use the role from request (admin or customer)
+        avatar: picture || undefined,
+        // password is not required for Google users due to schema validation
+      });
+    }
+
+    // Generate token
+    const token = generateToken({
+      userId: user._id.toString(),
+      email: user.email,
+      role: user.role
+    });
+
+    res.json({
+      success: true,
+      message: user.googleId ? 'Google login successful' : 'Account linked with Google',
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phone: user.phone,
+          avatar: user.avatar,
+          provider: user.provider
+        },
+        token
+      }
+    });
+
+  } catch (error: any) {
+    if (error.message?.includes('Token used too early') || error.message?.includes('Token used too late')) {
+      throw new AuthError('Google token is expired or invalid');
+    }
+    throw new AuthError('Failed to verify Google token');
+  }
 });
 
 /**
