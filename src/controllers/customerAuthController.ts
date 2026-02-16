@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import { OAuth2Client } from 'google-auth-library';
 import { Customer } from '../models/Customer';
 import { config } from '../config/env';
 import { emailService } from '../utils/emailService';
@@ -45,6 +46,15 @@ const verifyOTPSchema = z.object({
 const resendOTPSchema = z.object({
   email: z.string().email('Invalid email format')
 });
+
+const googleAuthSchema = z.object({
+  idToken: z.string().min(1, 'Google ID token is required')
+});
+
+// Initialize Google OAuth2 client
+const client = new OAuth2Client(
+  config.GOOGLE_CLIENT_ID
+);
 
 interface CustomerJWTPayload {
   customerId: string;
@@ -540,6 +550,139 @@ export const loginCustomer = asyncHandler(async (req: Request, res: Response) =>
       token
     }
   });
+});
+
+/**
+ * @swagger
+ * /api/v1/customers/google:
+ *   post:
+ *     summary: Google OAuth login/register for customers
+ *     tags: [Customer Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idToken
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: Google ID token from frontend
+ *     responses:
+ *       200:
+ *         description: Google authentication successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Google login successful"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     customer:
+ *                       $ref: '#/components/schemas/Customer'
+ *                     token:
+ *                       type: string
+ *       400:
+ *         description: Invalid Google token
+ *       500:
+ *         description: Internal server error
+ */
+export const googleAuth = asyncHandler(async (req: Request, res: Response) => {
+  const { idToken } = googleAuthSchema.parse(req.body);
+
+  try {
+    // Verify the Google ID token
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: config.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload) {
+      throw new AuthError('Invalid Google token');
+    }
+
+    const { sub: googleId, email, name, picture } = payload;
+    
+    if (!email || !name) {
+      throw new AuthError('Google account must have email and name');
+    }
+
+    // Check if customer already exists with this email
+    let customer = await Customer.findOne({ email });
+
+    if (customer) {
+      // If customer exists but doesn't have googleId, attach it
+      if (!customer.googleId) {
+        customer.googleId = googleId;
+        customer.provider = 'google';
+        customer.isEmailVerified = true; // Google emails are verified
+        if (picture) customer.avatar = picture;
+        await customer.save();
+      }
+    } else {
+      // Create new customer with Google OAuth
+      customer = await Customer.create({
+        name,
+        email,
+        googleId,
+        provider: 'google',
+        isEmailVerified: true, // Google emails are verified
+        avatar: picture || undefined,
+        // password is not required for Google users due to schema validation
+      });
+    }
+
+    // Generate token
+    const token = generateCustomerToken({
+      customerId: customer._id.toString(),
+      email: customer.email,
+      isEmailVerified: customer.isEmailVerified
+    });
+
+    // Set cookie with enhanced production options
+    const cookieOptions = getCookieOptions();
+    res.cookie('customerToken', token, {
+      ...cookieOptions,
+      // Enhanced production settings
+      ...(config.NODE_ENV === 'production' && {
+        secure: true,
+        sameSite: 'none', // Required for cross-origin cookies in production
+      })
+    });
+
+    res.status(200).json({
+      success: true,
+      message: customer.googleId ? 'Google login successful' : 'Account linked with Google',
+      data: {
+        customer: {
+          id: customer._id,
+          name: customer.name,
+          email: customer.email,
+          phone: customer.phone,
+          isEmailVerified: customer.isEmailVerified,
+          avatar: customer.avatar,
+          provider: customer.provider
+        },
+        token
+      }
+    });
+
+  } catch (error: any) {
+    if (error.message?.includes('Token used too early') || error.message?.includes('Token used too late')) {
+      throw new AuthError('Google token is expired or invalid');
+    }
+    throw new AuthError('Failed to verify Google token');
+  }
 });
 
 // Logout customer

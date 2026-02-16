@@ -24,17 +24,15 @@ export const authenticateCustomer = async (
   try {
     let token: string | undefined;
 
-    // Get token from cookie first (preferred method)
-    if (req.cookies && req.cookies.customerToken) {
-      token = req.cookies.customerToken;
+    // Try Authorization header first (more reliable in production)
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
     }
     
-    // Fallback to Authorization header for API calls
-    if (!token) {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        token = authHeader.substring(7);
-      }
+    // Fallback to cookie if header not present
+    if (!token && req.cookies && req.cookies.customerToken) {
+      token = req.cookies.customerToken;
     }
 
     if (!token) {
@@ -50,8 +48,8 @@ export const authenticateCustomer = async (
       throw new AuthError('Customer not found. Please log in again.');
     }
 
-    // Check if email is verified
-    if (!customer.isEmailVerified) {
+    // Check if email is verified - but allow Google OAuth users to proceed
+    if (!customer.isEmailVerified && customer.provider !== 'google') {
       throw new AuthError('Please verify your email before accessing this resource');
     }
 
