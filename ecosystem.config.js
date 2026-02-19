@@ -22,7 +22,11 @@ module.exports = {
       SMTP_HOST: 'smtp.hostinger.com',
       SMTP_PORT: 587,
       SMTP_USER: 'info@hiprotech.org',
+<<<<<<< HEAD
+      SMTP_PASS: 'Abhi@2026',
+=======
       SMTP_PASS: 'REMOVED_SMTP_PASS',
+>>>>>>> d3468dbd0eedab05873e7f0c5119f6e730885931
       SMTP_FROM_NAME: 'HiPro Commerce'
     },
     error_file: './logs/err.log',

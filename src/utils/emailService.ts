@@ -29,7 +29,7 @@ class EmailService {
       requireTLS: true,
       auth: {
         user: process.env.SMTP_USER, // info@hiprotech.org
-        pass: process.env.SMTP_PASS, // REMOVED_SMTP_PASS
+        pass: process.env.SMTP_PASS, // Abhi@2026
       },
       tls: {
         rejectUnauthorized: false,
@@ -145,7 +145,7 @@ HiPro Commerce Team`;
 
     const text = `Hello ${name},
 
-Welcome to HiPro Commerce!
+Welcome to Hipro Commerce!
 Your account is now active.
 
 Happy shopping!
