@@ -29,7 +29,15 @@ Environment=ALLOWED_FILE_TYPES=image/jpeg,image/png,image/webp,image/gif
 Environment=LOG_LEVEL=info
 Environment=EMAIL_SERVICE=smtp
 Environment=EMAIL_USER=info@hiprotech.org
+<<<<<<< HEAD
 Environment=EMAIL_PASS=Abhi@2026
+=======
+<<<<<<< HEAD
+Environment=EMAIL_PASS=Abhi@2026
+=======
+Environment=EMAIL_PASS=REMOVED_SMTP_PASS
+>>>>>>> d3468dbd0eedab05873e7f0c5119f6e730885931
+>>>>>>> 9623c40c27bb425ea7d778c80c6ed72460343591
 Environment=EMAIL_FROM=info@hiprotech.org
 Environment=SMTP_HOST=smtp.hostinger.com
 Environment=SMTP_PORT=587

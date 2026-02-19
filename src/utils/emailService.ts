@@ -145,7 +145,7 @@ HiPro Commerce Team`;
 
     const text = `Hello ${name},
 
-Welcome to HiPro Commerce!
+Welcome to Hipro Commerce!
 Your account is now active.
 
 Happy shopping!
