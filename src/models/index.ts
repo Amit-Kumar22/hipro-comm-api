@@ -7,3 +7,4 @@ export { Cart, type ICart, type ICartItem } from './Cart';
 export { Inventory, StockReservation, type IInventory, type IStockReservation } from './Inventory';
 export { Order, type IOrder, type IOrderItem, type OrderStatus, type PaymentStatus } from './Order';
 export { Payment, type IPayment } from './Payment';
+export { Image, type IImage } from './Image';
