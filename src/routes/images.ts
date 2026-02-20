@@ -38,6 +38,18 @@ const router = express.Router();
  *       404:
  *         description: Image not found
  */
+
+// Handle OPTIONS requests for CORS preflight
+router.options('/:id', (req, res) => {
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
+    'Access-Control-Max-Age': '86400', // 24 hours
+  });
+  res.status(200).end();
+});
+
 router.get('/:id', getImage);
 
 /**

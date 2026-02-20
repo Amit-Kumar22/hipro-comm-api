@@ -28,9 +28,23 @@ export const imageUpload = multer({
 
 // Helper function to generate image URL
 export const generateImageUrl = (imageId: string): string => {
-  const baseUrl = process.env.NODE_ENV === 'production' 
-    ? 'https://shop.hiprotech.org' 
-    : (process.env.API_BASE_URL || 'http://localhost:5001');
+  // Priority: Custom API URL > Environment-specific URL > Default fallback
+  let baseUrl: string;
+  
+  if (process.env.API_BASE_URL) {
+    // Use custom API base URL if provided
+    baseUrl = process.env.API_BASE_URL;
+  } else if (process.env.NODE_ENV === 'production') {
+    // Production default
+    baseUrl = 'https://shop.hiprotech.org';
+  } else {
+    // Development fallback
+    baseUrl = 'http://localhost:5001';
+  }
+  
+  // Ensure baseUrl doesn't end with slash
+  baseUrl = baseUrl.replace(/\/$/, '');
+  
   return `${baseUrl}/api/v1/images/${imageId}`;
 };
 
@@ -46,8 +60,12 @@ export const getImage = asyncHandler(async (req: Request, res: Response) => {
     throw new NotFoundError('Image not found');
   }
 
-  // Set cache headers for images (cache for 1 year since images are immutable)
+  // Set CORS headers for cross-origin image access
   res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
+    'Cross-Origin-Resource-Policy': 'cross-origin',
     'Content-Type': image.contentType,
     'Content-Length': image.size,
     'Cache-Control': 'public, max-age=31536000, immutable',
