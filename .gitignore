@@ -94,5 +94,3 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
-.env.example
-.env.backup

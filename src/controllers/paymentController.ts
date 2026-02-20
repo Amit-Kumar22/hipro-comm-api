@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { z } from 'zod';
-import { Payment, Order } from '../models';
+import { Payment, Order, Image } from '../models';
 import { 
   asyncHandler, 
   ValidationError, 
@@ -480,8 +480,25 @@ export const verifyPaymentProof = asyncHandler(async (req: CustomerAuthenticated
   }
 
   if (paymentProof) {
-    // In production, upload to cloud storage (AWS S3, Cloudinary, etc.)
-    proofData.screenshotPath = paymentProof.filename;
+    // Store payment proof screenshot in database
+    const baseUrl = process.env.NODE_ENV === 'production' 
+      ? 'https://shop.hiprotech.org' 
+      : (process.env.API_BASE_URL || 'http://localhost:5001');
+    
+    const image = await Image.create({
+      name: paymentProof.originalname,
+      alt: `Payment proof for order ${orderId}`,
+      data: paymentProof.buffer,
+      contentType: paymentProof.mimetype,
+      size: paymentProof.size,
+      entityType: 'payment',
+      entityId: payment._id,
+      isPrimary: true
+    });
+    
+    // Store the database image URL instead of filesystem path
+    proofData.screenshotUrl = `${baseUrl}/api/v1/images/${image._id}`;
+    proofData.screenshotId = image._id;
   }
 
   // Update payment with proof

@@ -14,11 +14,7 @@ const testHostingerSMTP = async () => {
         secure: false, // false for 587
         auth: {
             user: 'info@hiprotech.org',
-<<<<<<< HEAD
             pass: 'Abhi@2026'
-=======
-            pass: 'REMOVED_SMTP_PASS'
->>>>>>> d3468dbd0eedab05873e7f0c5119f6e730885931
         },
         tls: {
             rejectUnauthorized: false

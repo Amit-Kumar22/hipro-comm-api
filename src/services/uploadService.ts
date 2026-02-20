@@ -110,6 +110,7 @@ export const mediaUpload = multer({
     const allowedMimeTypes = [
       // Images
       'image/jpeg',
+      'image/jpg',
       'image/png',
       'image/gif',
       'image/webp',

@@ -45,6 +45,7 @@ import adminRoutes from './routes/admin.js';
 import customerRoutes from './routes/customers.js';
 import profileRoutes from './routes/profile.js';
 import uploadRoutes from './routes/upload.js';
+import imageRoutes from './routes/images.js';
 
 const app = express();
 
@@ -162,9 +163,17 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 app.get('/docs', (_, res) => res.redirect('/api/docs'));
 
 /* -------------------------------------------------
-   Static Files
+   Static Files (with CORS headers for cross-origin image loading)
 -------------------------------------------------- */
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', (req, res, next) => {
+  // Add CORS headers for static files
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.header('Cache-Control', 'public, max-age=31536000');
+  next();
+}, express.static('uploads'));
 
 /* -------------------------------------------------
    API Routes (v1)
@@ -182,6 +191,7 @@ app.use('/api/v1/payment', paymentVerificationRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/upload', uploadRoutes);
+app.use('/api/v1/images', imageRoutes);
 
 /* -------------------------------------------------
    Error Handling
@@ -200,6 +210,8 @@ const startServer = async () => {
     
     const directories = [
       path.join(__dirname, '../uploads'),
+      path.join(__dirname, '../uploads/images'),
+      path.join(__dirname, '../uploads/videos'),
       path.join(__dirname, '../uploads/payment-proofs'),
       path.join(__dirname, '../uploads/products'),
       path.join(__dirname, '../uploads/categories'),

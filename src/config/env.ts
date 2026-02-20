@@ -14,7 +14,7 @@ export const config = {
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
   RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
   MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE || '10485760', 10),
-  ALLOWED_FILE_TYPES: process.env.ALLOWED_FILE_TYPES?.split(',') || ['image/jpeg', 'image/png', 'image/webp'],
+  ALLOWED_FILE_TYPES: process.env.ALLOWED_FILE_TYPES?.split(',') || ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'],
   LOG_LEVEL: process.env.LOG_LEVEL || 'info',
   // Google OAuth Configuration
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',

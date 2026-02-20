@@ -1,12 +1,38 @@
 import express from 'express';
-import { imageUpload, videoUpload, mediaUpload, generateFileUrl } from '../services/uploadService.js';
+import multer from 'multer';
+import { videoUpload, mediaUpload, generateFileUrl } from '../services/uploadService.js';
 import { authenticate, requireAdmin } from '../middleware/authMiddleware.js';
 import { analyzeVideoFile } from '../controllers/videoAnalysisController.js';
+import { Image, IImage } from '../models/index.js';
 
 const router = express.Router();
 
-// Upload single image
-router.post('/image', authenticate, requireAdmin, imageUpload.single('image'), (req, res) => {
+// Configure multer for memory storage (database storage)
+const memoryStorage = multer.memoryStorage();
+const imageUploadToDb = multer({
+  storage: memoryStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB for images
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!') as any, false);
+    }
+  }
+});
+
+// Helper function to generate image URL from database ID
+const generateImageDbUrl = (imageId: string): string => {
+  const baseUrl = process.env.NODE_ENV === 'production' 
+    ? 'https://shop.hiprotech.org' 
+    : (process.env.API_BASE_URL || 'http://localhost:5001');
+  return `${baseUrl}/api/v1/images/${imageId}`;
+};
+
+// Upload single image to database
+router.post('/image', authenticate, requireAdmin, imageUploadToDb.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -15,14 +41,27 @@ router.post('/image', authenticate, requireAdmin, imageUpload.single('image'), (
       });
     }
 
-    const imageUrl = generateFileUrl(req.file.filename, 'image');
+    // Store image in database
+    const image = await Image.create({
+      name: req.file.originalname,
+      alt: req.body.alt || req.file.originalname,
+      data: req.file.buffer,
+      contentType: req.file.mimetype,
+      size: req.file.size,
+      entityType: req.body.entityType || 'other',
+      entityId: req.body.entityId || null,
+      isPrimary: req.body.isPrimary === 'true' || req.body.isPrimary === true
+    });
+
+    const imageUrl = generateImageDbUrl(image._id.toString());
     
     return res.status(200).json({
       success: true,
       message: 'Image uploaded successfully',
       data: {
+        id: image._id,
         url: imageUrl,
-        filename: req.file.filename,
+        filename: image.name,
         originalName: req.file.originalname,
         size: req.file.size,
         mimetype: req.file.mimetype
@@ -38,8 +77,8 @@ router.post('/image', authenticate, requireAdmin, imageUpload.single('image'), (
   }
 });
 
-// Upload multiple images
-router.post('/images', authenticate, requireAdmin, imageUpload.array('images', 10), (req, res) => {
+// Upload multiple images to database
+router.post('/images', authenticate, requireAdmin, imageUploadToDb.array('images', 10), async (req, res) => {
   try {
     const files = req.files as Express.Multer.File[];
     
@@ -50,13 +89,43 @@ router.post('/images', authenticate, requireAdmin, imageUpload.array('images', 1
       });
     }
 
-    const uploadedImages = files.map(file => ({
-      url: generateFileUrl(file.filename, 'image'),
-      filename: file.filename,
-      originalName: file.originalname,
-      size: file.size,
-      mimetype: file.mimetype
-    }));
+    // Parse alt texts if provided
+    let altTexts: string[] = [];
+    if (req.body.alts) {
+      try {
+        altTexts = JSON.parse(req.body.alts);
+      } catch {
+        altTexts = req.body.alts.split(',').map((a: string) => a.trim());
+      }
+    }
+
+    const uploadedImages = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file) continue;
+      const alt = altTexts[i] || file.originalname;
+      
+      // Store image in database
+      const image = await Image.create({
+        name: file.originalname,
+        alt: alt,
+        data: file.buffer,
+        contentType: file.mimetype,
+        size: file.size,
+        entityType: req.body.entityType || 'other',
+        entityId: req.body.entityId || null,
+        isPrimary: i === 0 // First image is primary by default
+      });
+
+      uploadedImages.push({
+        id: image._id,
+        url: generateImageDbUrl(image._id.toString()),
+        filename: image.name,
+        originalName: file.originalname,
+        size: file.size,
+        mimetype: file.mimetype
+      });
+    }
     
     return res.status(200).json({
       success: true,
@@ -108,8 +177,8 @@ router.post('/video', authenticate, requireAdmin, videoUpload.single('video'), (
   }
 });
 
-// Upload mixed media (images and videos)
-router.post('/media', authenticate, requireAdmin, mediaUpload.array('media', 15), (req, res) => {
+// Upload mixed media (images to database, videos to filesystem)
+router.post('/media', authenticate, requireAdmin, mediaUpload.array('media', 15), async (req, res) => {
   try {
     const files = req.files as Express.Multer.File[];
     
@@ -120,17 +189,55 @@ router.post('/media', authenticate, requireAdmin, mediaUpload.array('media', 15)
       });
     }
 
-    const uploadedMedia = files.map(file => {
+    const uploadedMedia = [];
+    
+    for (const file of files) {
       const type = file.mimetype.startsWith('image/') ? 'image' : 'video';
-      return {
-        url: generateFileUrl(file.filename, type),
-        filename: file.filename,
-        originalName: file.originalname,
-        size: file.size,
-        mimetype: file.mimetype,
-        type
-      };
-    });
+      
+      if (type === 'image') {
+        // Read the file from disk and store in database
+        const fs = await import('fs/promises');
+        const fileData = await fs.readFile(file.path);
+        
+        const image: IImage = await Image.create({
+          name: file.originalname,
+          alt: file.originalname,
+          data: fileData,
+          contentType: file.mimetype,
+          size: file.size,
+          entityType: req.body.entityType || 'other',
+          entityId: req.body.entityId || null,
+          isPrimary: uploadedMedia.length === 0 // First image is primary
+        }) as IImage;
+        
+        // Delete the file from filesystem after storing in db
+        try {
+          await fs.unlink(file.path);
+        } catch (e) {
+          console.error('Failed to delete temp file:', e);
+        }
+        
+        uploadedMedia.push({
+          id: image._id,
+          url: generateImageDbUrl(image._id.toString()),
+          filename: image.name,
+          originalName: file.originalname,
+          size: file.size,
+          mimetype: file.mimetype,
+          type: 'image'
+        });
+      } else {
+        // Videos stay in filesystem
+        uploadedMedia.push({
+          url: generateFileUrl(file.filename, 'video'),
+          filename: file.filename,
+          originalName: file.originalname,
+          size: file.size,
+          mimetype: file.mimetype,
+          type: 'video'
+        });
+      }
+    }
     
     return res.status(200).json({
       success: true,
