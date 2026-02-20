@@ -56,6 +56,18 @@ web_modules/
 .env.production
 .env.development
 .env.local
+.env.backup
+
+# Secrets and credentials
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.json
+credentials.json
+*secret*
+*password*
+*token*
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -80,7 +92,7 @@ tmp/
 temp/
 
 # Editor directories and files
-.vscode/
+.vscode/settings.json
 .idea/
 *.swp
 *.swo
@@ -94,3 +106,16 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Git backup files
+*.orig
+*.rej
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Log files
+*.log
+logs/
